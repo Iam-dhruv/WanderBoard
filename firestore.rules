@@ -1,0 +1,102 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ──────────────────────────────────────────────────────
+
+    // Is the request from a signed-in user?
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    // Is the requesting user the same as the uid parameter?
+    function isUser(uid) {
+      return isAuthed() && request.auth.uid == uid;
+    }
+
+    // Is the requesting user a member of this trip?
+    // Reads the memberIds array on the trip document — fast indexed query.
+    function isTripMember(tripId) {
+      return isAuthed() &&
+        request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.memberIds;
+    }
+
+    // Is the requesting user the owner of this trip?
+    function isTripOwner(tripId) {
+      return isAuthed() &&
+        request.auth.uid == get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId;
+    }
+
+    // Validate that incoming trip data has all required fields with correct types
+    function isValidTrip() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['name', 'destination', 'startDate', 'endDate',
+                              'inviteCode', 'ownerId', 'memberIds', 'createdAt'])
+          && d.name is string       && d.name.size() > 0 && d.name.size() <= 100
+          && d.destination is string && d.destination.size() > 0
+          && d.inviteCode is string  && d.inviteCode.size() == 6
+          && d.ownerId == request.auth.uid   // creator must be the owner
+          && d.memberIds is list
+          && d.memberIds.size() == 1         // only owner on create
+          && d.memberIds[0] == request.auth.uid;
+    }
+
+    // ─── /users/{uid} ─────────────────────────────────────────────────────────
+    // Users can only read/write their own profile document.
+
+    match /users/{uid} {
+      allow read:   if isUser(uid);
+      allow create: if isUser(uid);
+      allow update: if isUser(uid)
+                    // Prevent privilege escalation — users cannot change their own uid
+                    && request.resource.data.uid == uid;
+      allow delete: if false;  // profiles are never deleted via client
+    }
+
+    // ─── /trips/{tripId} ──────────────────────────────────────────────────────
+
+    match /trips/{tripId} {
+
+      // Any member can read the trip document
+      allow read: if isTripMember(tripId);
+
+      // Any authenticated user can create a trip (validated above)
+      allow create: if isAuthed() && isValidTrip();
+
+      // Only the owner can update trip metadata (name, destination, dates)
+      // Members joining is handled via the members sub-collection + memberIds array
+      allow update: if isTripOwner(tripId)
+                    // Owner cannot transfer ownership or change inviteCode arbitrarily
+                    && request.resource.data.ownerId == resource.data.ownerId
+                    && request.resource.data.inviteCode == resource.data.inviteCode;
+
+      // Trips cannot be deleted via client (archive via soft-delete in week 2)
+      allow delete: if false;
+
+      // ─── /trips/{tripId}/members/{userId} ───────────────────────────────────
+
+      match /members/{userId} {
+
+        // Any trip member can read the member list
+        allow read: if isTripMember(tripId);
+
+        // A user can create their own member document (joining the trip)
+        // The trip-level memberIds array update is validated server-side via transaction
+        allow create: if isAuthed()
+                      && request.auth.uid == userId
+                      && request.resource.data.role == 'member'  // cannot self-assign owner
+                      && request.resource.data.userId == userId;
+
+        // Owner can create member docs (used when creating the trip — owner member doc)
+        allow create: if isTripOwner(tripId);
+
+        // Members cannot update role — only owner can promote (week 2 feature)
+        allow update: if isTripOwner(tripId);
+
+        // Owner can remove members; a member can remove themselves
+        allow delete: if isTripOwner(tripId) || isUser(userId);
+      }
+    }
+  }
+}
