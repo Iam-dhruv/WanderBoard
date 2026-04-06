@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useTripStore } from './useTripStore';
 import { getUserTrips, createTrip, joinTrip } from './tripService';
 import { signOut } from '@/features/auth/authService';
 import { ROUTES } from '@/config/routes';
+import { useJsApiLoader } from '@react-google-maps/api';
 import type { Trip } from '@/types';
 
 export function DashboardPage() {
@@ -174,19 +175,58 @@ function CreateTripModal({ userId, onClose, onCreated }: {
 }) {
   const [name, setName]               = useState('');
   const [destination, setDestination] = useState('');
-  const [customDestination, setCustomDestination] = useState('');
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
   const [error, setError]             = useState('');
   const [loading, setLoading]         = useState(false);
 
+  const destinationInputRef = useRef<HTMLInputElement | null>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
+    libraries: ['maps', 'places'],
+  });
+
+  useEffect(() => {
+    if (!isLoaded || !destinationInputRef.current || autocompleteRef.current) return;
+
+    let listener: google.maps.MapsEventListener | null = null;
+
+    try {
+      const googleMaps = window.google;
+      if (!googleMaps?.maps?.places?.Autocomplete) {
+        throw new Error('Google Places library not available');
+      }
+
+      const autocomplete = new googleMaps.maps.places.Autocomplete(
+        destinationInputRef.current,
+        { types: ['(cities)'], fields: ['formatted_address'] },
+      );
+      autocompleteRef.current = autocomplete;
+
+      listener = autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace();
+        if (!place?.formatted_address) return;
+        setDestination(place.formatted_address);
+      });
+    } catch (error) {
+      console.error('[CreateTripModal] Places autocomplete init failed:', error);
+    }
+
+    return () => {
+      listener?.remove();
+    };
+  }, [isLoaded]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const resolvedDestination = destination === 'other' ? customDestination.trim() : destination.trim();
+    const trimmedDestination = destination.trim();
 
-    if (!resolvedDestination) {
-      setError('Please choose a destination.');
+    if (!trimmedDestination) {
+      setError('Please enter a destination.');
       return;
     }
 
@@ -198,7 +238,7 @@ function CreateTripModal({ userId, onClose, onCreated }: {
     setLoading(true);
     const result = await createTrip({
       name,
-      destination: resolvedDestination,
+      destination: trimmedDestination,
       startDate,
       endDate,
       ownerId: userId.uid,
@@ -217,44 +257,23 @@ function CreateTripModal({ userId, onClose, onCreated }: {
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Trip name" id="tname"><input id="tname" required value={name} onChange={e=>setName(e.target.value)} className={inputCls} placeholder="Himachal Adventure"/></Field>
         <Field label="Destination" id="dest">
-          <select
+          <input
             id="dest"
+            ref={destinationInputRef}
             required
             value={destination}
             onChange={(e) => setDestination(e.target.value)}
             className={inputCls}
-          >
-            <option value="" disabled>Select a destination</option>
-            <optgroup label="India">
-              <option value="Manali, Himachal Pradesh">Manali, Himachal Pradesh</option>
-              <option value="Goa">Goa</option>
-              <option value="Rishikesh, Uttarakhand">Rishikesh, Uttarakhand</option>
-              <option value="Jaipur, Rajasthan">Jaipur, Rajasthan</option>
-              <option value="Leh, Ladakh">Leh, Ladakh</option>
-              <option value="Udaipur, Rajasthan">Udaipur, Rajasthan</option>
-            </optgroup>
-            <optgroup label="International">
-              <option value="Bali, Indonesia">Bali, Indonesia</option>
-              <option value="Bangkok, Thailand">Bangkok, Thailand</option>
-              <option value="Dubai, UAE">Dubai, UAE</option>
-              <option value="Paris, France">Paris, France</option>
-              <option value="Istanbul, Turkey">Istanbul, Turkey</option>
-            </optgroup>
-            <option value="other">Other (type manually)</option>
-          </select>
+            placeholder="Enter city, region, or destination"
+            autoComplete="off"
+          />
+          {loadError && (
+            <p className="mt-2 text-xs text-yellow-700">Autocomplete is unavailable; please type a destination manually.</p>
+          )}
+          {!loadError && !isLoaded && (
+            <p className="mt-2 text-xs text-gray-500">Loading place suggestions…</p>
+          )}
         </Field>
-        {destination === 'other' && (
-          <Field label="Custom destination" id="custom-dest">
-            <input
-              id="custom-dest"
-              required
-              value={customDestination}
-              onChange={(e) => setCustomDestination(e.target.value)}
-              className={inputCls}
-              placeholder="Type city and region"
-            />
-          </Field>
-        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start date" id="sd"><input id="sd" type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)} className={inputCls}/></Field>
           <Field label="End date" id="ed"><input id="ed" type="date" required value={endDate} onChange={e=>setEndDate(e.target.value)} className={inputCls}/></Field>

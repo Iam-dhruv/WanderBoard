@@ -14,16 +14,16 @@
     <meta http-equiv="Content-Security-Policy"
       content="
         default-src 'self';
-        script-src 'self';
-        style-src 'self' 'unsafe-inline';
+        script-src 'self' https://maps.googleapis.com;
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
         connect-src 'self'
           https://*.googleapis.com
           https://*.firebaseio.com
           https://*.cloudfunctions.net
           https://identitytoolkit.googleapis.com
           https://securetoken.googleapis.com;
-        img-src 'self' data: https://lh3.googleusercontent.com;
-        font-src 'self';
+        img-src 'self' data: https://lh3.googleusercontent.com https://maps.googleapis.com https://maps.gstatic.com;
+        font-src 'self' https://fonts.gstatic.com;
       "
     />
     <title>WanderBoard</title>

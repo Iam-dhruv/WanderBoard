@@ -6,6 +6,7 @@ import { RegisterPage } from '@/features/auth/RegisterPage';
 import { DashboardPage } from '@/features/trips/DashboardPage';
 import { TripWorkspacePage } from '@/features/trips/TripWorkspacePage';
 import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
+import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
 import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
 import { ROUTES } from '@/config/routes';
 
@@ -34,15 +35,7 @@ export default function App() {
                   />
                 )}
               />
-              <Route
-                path="discovery"
-                element={(
-                  <TripFeaturePlaceholderPage
-                    title="Discovery"
-                    description="Map-based activity discovery and search will be added in this tab."
-                  />
-                )}
-              />
+              <Route path="discovery" element={<TripDiscoveryPage />} />
               <Route
                 path="expenses"
                 element={(

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { NavLink, Outlet, useNavigate, useParams, Link } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useTripStore } from './useTripStore';
 import { getTrip, getTripMembers } from './tripService';
@@ -10,6 +10,7 @@ export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
   const { user }   = useAuth();
   const navigate   = useNavigate();
+  const location   = useLocation();
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
 
   useEffect(() => {
@@ -35,6 +36,8 @@ export function TripWorkspacePage() {
       setActiveTrip(null);
     };
   }, [tripId, navigate, setActiveTrip, setMembers]);
+
+  const isDiscoveryPage = location.pathname.endsWith('/discovery');
 
   const isOwner = activeTrip?.ownerId === user?.uid;
 
@@ -71,36 +74,42 @@ export function TripWorkspacePage() {
         </nav>
       </div>
 
-      <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-3 gap-8 items-start">
-        <section className="col-span-2 min-w-0">
+      {isDiscoveryPage ? (
+        <div className="h-[calc(100vh-8rem)]">
           <Outlet />
-        </section>
+        </div>
+      ) : (
+        <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-3 gap-8 items-start">
+          <section className="col-span-2 min-w-0">
+            <Outlet />
+          </section>
 
-        <aside>
-          <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
-              <span className="text-xs text-gray-400">{members.length}</span>
-            </div>
-
-            {isOwner && (
-              <div className="mb-4 bg-gray-50 rounded-lg px-3 py-2.5">
-                <p className="text-xs text-gray-500 mb-1">Invite code</p>
-                <p className="font-mono font-semibold text-gray-900 tracking-widest text-sm">
-                  {activeTrip.inviteCode}
-                </p>
-                <p className="text-xs text-gray-400 mt-1">Share with group members</p>
+          <aside>
+            <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
+                <span className="text-xs text-gray-400">{members.length}</span>
               </div>
-            )}
 
-            <div className="space-y-2">
-              {members.map((m) => (
-                <MemberRow key={m.userId} member={m} isCurrentUser={m.userId === user?.uid} />
-              ))}
+              {isOwner && (
+                <div className="mb-4 bg-gray-50 rounded-lg px-3 py-2.5">
+                  <p className="text-xs text-gray-500 mb-1">Invite code</p>
+                  <p className="font-mono font-semibold text-gray-900 tracking-widest text-sm">
+                    {activeTrip.inviteCode}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">Share with group members</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {members.map((m) => (
+                  <MemberRow key={m.userId} member={m} isCurrentUser={m.userId === user?.uid} />
+                ))}
+              </div>
             </div>
-          </div>
-        </aside>
-      </main>
+          </aside>
+        </main>
+      )}
     </div>
   );
 }
