@@ -14,6 +14,7 @@ export function DashboardPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin]     = useState(false);
+  const [activeTab, setActiveTab]   = useState<'owned' | 'member'>('owned');
 
   // Load trips on mount
   useEffect(() => {
@@ -30,6 +31,10 @@ export function DashboardPage() {
     reset();
     navigate(ROUTES.LOGIN, { replace: true });
   }
+
+  const ownedTrips = trips.filter((trip) => trip.ownerId === user?.uid);
+  const memberTrips = trips.filter((trip) => trip.ownerId !== user?.uid);
+  const visibleTrips = activeTab === 'owned' ? ownedTrips : memberTrips;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -58,7 +63,7 @@ export function DashboardPage() {
               onClick={() => setShowCreate(true)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
             >
-              New trip
+              Create team
             </button>
           </div>
         </div>
@@ -66,19 +71,52 @@ export function DashboardPage() {
         {tripsLoading && <p className="text-sm text-gray-400">Loading…</p>}
         {tripsError   && <p className="text-sm text-red-600">{tripsError}</p>}
 
+        {!tripsLoading && trips.length > 0 && (
+          <div className="mb-5 inline-flex rounded-lg border border-gray-200 bg-white p-1">
+            <button
+              onClick={() => setActiveTab('owned')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                activeTab === 'owned' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100',
+              ].join(' ')}
+            >
+              Created by you ({ownedTrips.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('member')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                activeTab === 'member' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100',
+              ].join(' ')}
+            >
+              You are a member ({memberTrips.length})
+            </button>
+          </div>
+        )}
+
         {!tripsLoading && trips.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-200 py-16 text-center">
             <p className="text-gray-400 text-sm">No trips yet — create one or join with a code.</p>
           </div>
         )}
 
+        {!tripsLoading && trips.length > 0 && visibleTrips.length === 0 && (
+          <div className="rounded-xl border border-dashed border-gray-200 py-14 text-center">
+            <p className="text-gray-400 text-sm">
+              {activeTab === 'owned'
+                ? 'You have not created any trips yet.'
+                : 'You have not joined any trips yet.'}
+            </p>
+          </div>
+        )}
+
         <div className="space-y-3">
-          {trips.map((trip) => (
+          {visibleTrips.map((trip) => (
             <TripCard
               key={trip.id}
               trip={trip}
               ownerId={user!.uid}
-              onClick={() => navigate(ROUTES.trip(trip.id))}
+              onClick={() => navigate(ROUTES.tripPlanning(trip.id))}
             />
           ))}
         </div>
@@ -88,14 +126,14 @@ export function DashboardPage() {
         <CreateTripModal
           userId={user!}
           onClose={() => setShowCreate(false)}
-          onCreated={(t) => { addTrip(t); setShowCreate(false); navigate(ROUTES.trip(t.id)); }}
+          onCreated={(t) => { addTrip(t); setShowCreate(false); navigate(ROUTES.tripPlanning(t.id)); }}
         />
       )}
       {showJoin && (
         <JoinTripModal
           user={user!}
           onClose={() => setShowJoin(false)}
-          onJoined={(t) => { addTrip(t); setShowJoin(false); navigate(ROUTES.trip(t.id)); }}
+          onJoined={(t) => { addTrip(t); setShowJoin(false); navigate(ROUTES.tripPlanning(t.id)); }}
         />
       )}
     </div>
@@ -136,6 +174,7 @@ function CreateTripModal({ userId, onClose, onCreated }: {
 }) {
   const [name, setName]               = useState('');
   const [destination, setDestination] = useState('');
+  const [customDestination, setCustomDestination] = useState('');
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
   const [error, setError]             = useState('');
@@ -144,13 +183,24 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    const resolvedDestination = destination === 'other' ? customDestination.trim() : destination.trim();
+
+    if (!resolvedDestination) {
+      setError('Please choose a destination.');
+      return;
+    }
+
     if (new Date(endDate) < new Date(startDate)) {
       setError('End date must be after start date.');
       return;
     }
+
     setLoading(true);
     const result = await createTrip({
-      name, destination, startDate, endDate,
+      name,
+      destination: resolvedDestination,
+      startDate,
+      endDate,
       ownerId: userId.uid,
       ownerDisplayName: userId.displayName ?? 'Traveler',
       ownerEmail: userId.email ?? '',
@@ -162,17 +212,55 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   }
 
   return (
-    <Modal title="New trip" onClose={onClose}>
+    <Modal title="Create team" onClose={onClose}>
       {error && <p className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Trip name" id="tname"><input id="tname" required value={name} onChange={e=>setName(e.target.value)} className={inputCls} placeholder="Himachal Adventure"/></Field>
-        <Field label="Destination" id="dest"><input id="dest" required value={destination} onChange={e=>setDestination(e.target.value)} className={inputCls} placeholder="Manali, Himachal Pradesh"/></Field>
+        <Field label="Destination" id="dest">
+          <select
+            id="dest"
+            required
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            className={inputCls}
+          >
+            <option value="" disabled>Select a destination</option>
+            <optgroup label="India">
+              <option value="Manali, Himachal Pradesh">Manali, Himachal Pradesh</option>
+              <option value="Goa">Goa</option>
+              <option value="Rishikesh, Uttarakhand">Rishikesh, Uttarakhand</option>
+              <option value="Jaipur, Rajasthan">Jaipur, Rajasthan</option>
+              <option value="Leh, Ladakh">Leh, Ladakh</option>
+              <option value="Udaipur, Rajasthan">Udaipur, Rajasthan</option>
+            </optgroup>
+            <optgroup label="International">
+              <option value="Bali, Indonesia">Bali, Indonesia</option>
+              <option value="Bangkok, Thailand">Bangkok, Thailand</option>
+              <option value="Dubai, UAE">Dubai, UAE</option>
+              <option value="Paris, France">Paris, France</option>
+              <option value="Istanbul, Turkey">Istanbul, Turkey</option>
+            </optgroup>
+            <option value="other">Other (type manually)</option>
+          </select>
+        </Field>
+        {destination === 'other' && (
+          <Field label="Custom destination" id="custom-dest">
+            <input
+              id="custom-dest"
+              required
+              value={customDestination}
+              onChange={(e) => setCustomDestination(e.target.value)}
+              className={inputCls}
+              placeholder="Type city and region"
+            />
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start date" id="sd"><input id="sd" type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)} className={inputCls}/></Field>
           <Field label="End date" id="ed"><input id="ed" type="date" required value={endDate} onChange={e=>setEndDate(e.target.value)} className={inputCls}/></Field>
         </div>
         <button type="submit" disabled={loading} className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
-          {loading ? 'Creating…' : 'Create trip'}
+          {loading ? 'Creating…' : 'Create team'}
         </button>
       </form>
     </Modal>

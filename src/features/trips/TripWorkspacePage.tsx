@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useTripStore } from './useTripStore';
 import { getTrip, getTripMembers } from './tripService';
@@ -13,17 +13,28 @@ export function TripWorkspacePage() {
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
 
   useEffect(() => {
-    if (!tripId) return;
+    let cancelled = false;
+
+    if (!tripId) {
+      navigate(ROUTES.DASHBOARD, { replace: true });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     // Load trip + members in parallel
     Promise.all([getTrip(tripId), getTripMembers(tripId)]).then(([tripResult, membersResult]) => {
+      if (cancelled) return;
       if (!tripResult.ok) { navigate(ROUTES.DASHBOARD); return; }
       setActiveTrip(tripResult.data);
       if (membersResult.ok) setMembers(membersResult.data);
     });
 
-    return () => setActiveTrip(null);
-  }, [tripId]);
+    return () => {
+      cancelled = true;
+      setActiveTrip(null);
+    };
+  }, [tripId, navigate, setActiveTrip, setMembers]);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
 
@@ -37,12 +48,11 @@ export function TripWorkspacePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Nav */}
       <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4">
         <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">← Trips</Link>
-        <div className="flex-1">
-          <h1 className="text-base font-semibold text-gray-900">{activeTrip.name}</h1>
-          <p className="text-xs text-gray-400">{activeTrip.destination} · {activeTrip.startDate} → {activeTrip.endDate}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-base font-semibold text-gray-900 truncate">{activeTrip.name}</h1>
+          <p className="text-xs text-gray-400 truncate">{activeTrip.destination} · {activeTrip.startDate} → {activeTrip.endDate}</p>
         </div>
         {isOwner && (
           <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full">
@@ -51,19 +61,23 @@ export function TripWorkspacePage() {
         )}
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-10 grid grid-cols-3 gap-8">
+      <div className="bg-white border-b border-gray-100">
+        <nav className="max-w-6xl mx-auto px-6 flex items-center gap-2 overflow-x-auto py-3">
+          <TabLink to="planning" label="Planning" />
+          <TabLink to="bucket-list" label="Bucket list" />
+          <TabLink to="discovery" label="Discovery" />
+          <TabLink to="expenses" label="Expenses" />
+          <TabLink to="contingency" label="Contingency" />
+        </nav>
+      </div>
 
-        {/* Left: feature panels (week 2+) */}
-        <div className="col-span-2 space-y-4">
-          <FeaturePlaceholder title="Bucket list" description="Add and vote on activities — coming in week 2" />
-          <FeaturePlaceholder title="Timeline" description={isOwner ? 'Finalize the itinerary' : 'View the finalized plan'} locked={!isOwner} />
-          <FeaturePlaceholder title="Weather & alerts" description="Environmental data dashboard — coming in week 2" />
-          <FeaturePlaceholder title="Expenses" description="Track and split costs — coming in week 3" />
-        </div>
+      <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-3 gap-8 items-start">
+        <section className="col-span-2 min-w-0">
+          <Outlet />
+        </section>
 
-        {/* Right: members sidebar */}
-        <div>
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
+        <aside>
+          <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
               <span className="text-xs text-gray-400">{members.length}</span>
@@ -85,9 +99,23 @@ export function TripWorkspacePage() {
               ))}
             </div>
           </div>
-        </div>
+        </aside>
       </main>
     </div>
+  );
+}
+
+function TabLink({ to, label }: { to: string; label: string }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => [
+        'whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+        isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800',
+      ].join(' ')}
+    >
+      {label}
+    </NavLink>
   );
 }
 
@@ -123,18 +151,3 @@ function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUse
   );
 }
 
-// ─── Feature placeholder ───────────────────────────────────────────────────────
-
-function FeaturePlaceholder({ title, description, locked }: {
-  title: string; description: string; locked?: boolean;
-}) {
-  return (
-    <div className={`rounded-xl border px-5 py-4 ${locked ? 'border-dashed border-amber-200 bg-amber-50/50' : 'border-gray-100 bg-white'}`}>
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-gray-700">{title}</p>
-        {locked && <span className="text-xs text-amber-600 font-medium">Owner only</span>}
-      </div>
-      <p className="text-xs text-gray-400 mt-1">{description}</p>
-    </div>
-  );
-}

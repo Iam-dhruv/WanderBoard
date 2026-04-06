@@ -1,14 +1,11 @@
 import {
   collection,
   doc,
-  setDoc,
   getDoc,
   getDocs,
-  updateDoc,
   arrayUnion,
   query,
   where,
-  serverTimestamp,
   runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -21,6 +18,7 @@ const tripsCol     = () => collection(db, 'trips');
 const tripDoc      = (id: string) => doc(db, 'trips', id);
 const membersCol   = (tripId: string) => collection(db, 'trips', tripId, 'members');
 const memberDoc    = (tripId: string, uid: string) => doc(db, 'trips', tripId, 'members', uid);
+const inviteDoc    = (code: string) => doc(db, 'tripInvites', code);
 
 // ─── Create trip ──────────────────────────────────────────────────────────────
 
@@ -37,39 +35,62 @@ export interface CreateTripInput {
 
 export async function createTrip(input: CreateTripInput): Promise<Result<Trip>> {
   try {
-    const tripRef  = doc(tripsCol());          // auto-generated ID
-    const inviteCode = generateInviteCode();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const tripRef = doc(tripsCol());
+      const inviteCode = generateInviteCode();
 
-    const trip: Omit<Trip, 'id'> = {
-      name:        input.name.trim(),
-      destination: input.destination.trim(),
-      startDate:   input.startDate,
-      endDate:     input.endDate,
-      inviteCode,
-      ownerId:     input.ownerId,
-      memberIds:   [input.ownerId],            // owner is always first member
-      createdAt:   Date.now(),
-    };
+      const trip: Omit<Trip, 'id'> = {
+        name:        input.name.trim(),
+        destination: input.destination.trim(),
+        startDate:   input.startDate,
+        endDate:     input.endDate,
+        inviteCode,
+        ownerId:     input.ownerId,
+        memberIds:   [input.ownerId],
+        createdAt:   Date.now(),
+      };
 
-    const ownerMember: TripMember = {
-      userId:      input.ownerId,
-      displayName: input.ownerDisplayName,
-      email:       input.ownerEmail,
-      photoURL:    input.ownerPhotoURL,
-      role:        'owner',
-      joinedAt:    Date.now(),
-    };
+      const ownerMember: TripMember = {
+        userId:      input.ownerId,
+        displayName: input.ownerDisplayName,
+        email:       input.ownerEmail,
+        photoURL:    input.ownerPhotoURL,
+        role:        'owner',
+        joinedAt:    Date.now(),
+      };
 
-    // Atomic write: create trip doc + owner member sub-doc together
-    await runTransaction(db, async (tx) => {
-      tx.set(tripRef, trip);
-      tx.set(memberDoc(tripRef.id, input.ownerId), ownerMember);
-    });
+      try {
+        await runTransaction(db, async (tx) => {
+          const inviteRef = inviteDoc(inviteCode);
+          const inviteSnap = await tx.get(inviteRef);
 
-    return ok({ id: tripRef.id, ...trip });
+          if (inviteSnap.exists()) {
+            throw new Error('INVITE_CODE_COLLISION');
+          }
+
+          tx.set(tripRef, trip);
+          tx.set(memberDoc(tripRef.id, input.ownerId), ownerMember);
+          tx.set(inviteRef, {
+            tripId: tripRef.id,
+            ownerId: input.ownerId,
+            createdAt: Date.now(),
+          });
+        });
+
+        return ok({ id: tripRef.id, ...trip });
+      } catch (e: any) {
+        if (e?.message === 'INVITE_CODE_COLLISION') {
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    return err('Could not generate a unique invite code. Please try again.');
   } catch (e: any) {
     console.error('[createTrip]', e);
-    return err('Failed to create trip. Please try again.');
+    const code = e?.code ? ` (${e.code})` : '';
+    return err(`Failed to create trip. Please try again${code}.`);
   }
 }
 
@@ -97,19 +118,23 @@ export async function joinTrip(input: JoinTripInput): Promise<Result<Trip>> {
   }
 
   try {
-    // Find the trip with this invite code
-    const q = query(tripsCol(), where('inviteCode', '==', code));
-    const snap = await getDocs(q);
+    let resolvedTripId: string | null = null;
 
-    if (snap.empty) {
-      return err('No trip found with that invite code. Check the code and try again.');
+    const inviteSnap = await getDoc(inviteDoc(code));
+    if (inviteSnap.exists()) {
+      const { tripId } = inviteSnap.data() as { tripId: string };
+      resolvedTripId = tripId;
+    } else {
+      // Fallback for trips created before tripInvites mapping existed.
+      const q = query(tripsCol(), where('inviteCode', '==', code));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        resolvedTripId = snap.docs[0].id;
+      }
     }
 
-    const tripSnap = snap.docs[0];
-    const trip = { id: tripSnap.id, ...tripSnap.data() } as Trip;
-
-    if (trip.memberIds.includes(input.userId)) {
-      return err('You are already a member of this trip.');
+    if (!resolvedTripId) {
+      return err('No trip found with that invite code. Check the code and try again.');
     }
 
     const newMember: TripMember = {
@@ -121,16 +146,37 @@ export async function joinTrip(input: JoinTripInput): Promise<Result<Trip>> {
       joinedAt:    Date.now(),
     };
 
-    // Atomic: add to memberIds array + create member sub-doc
-    await runTransaction(db, async (tx) => {
-      tx.update(tripDoc(trip.id), { memberIds: arrayUnion(input.userId) });
+    const joinedTrip = await runTransaction(db, async (tx) => {
+      const tripRef = tripDoc(resolvedTripId as string);
+      const tripSnap = await tx.get(tripRef);
+
+      if (!tripSnap.exists()) {
+        throw new Error('TRIP_NOT_FOUND');
+      }
+
+      const trip = { id: tripSnap.id, ...tripSnap.data() } as Trip;
+
+      if (trip.memberIds.includes(input.userId)) {
+        throw new Error('ALREADY_MEMBER');
+      }
+
+      tx.update(tripRef, { memberIds: arrayUnion(input.userId) });
       tx.set(memberDoc(trip.id, input.userId), newMember);
+
+      return { ...trip, memberIds: [...trip.memberIds, input.userId] };
     });
 
-    return ok({ ...trip, memberIds: [...trip.memberIds, input.userId] });
+    return ok(joinedTrip);
   } catch (e: any) {
+    if (e?.message === 'ALREADY_MEMBER') {
+      return err('You are already a member of this trip.');
+    }
+    if (e?.message === 'TRIP_NOT_FOUND') {
+      return err('Trip not found. Ask the owner to share a new invite code.');
+    }
     console.error('[joinTrip]', e);
-    return err('Failed to join trip. Please try again.');
+    const code = e?.code ? ` (${e.code})` : '';
+    return err(`Failed to join trip. Please try again${code}.`);
   }
 }
 
