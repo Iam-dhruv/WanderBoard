@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useTripStore } from './useTripStore';
@@ -7,6 +7,17 @@ import { ROUTES } from '@/config/routes';
 import type { TripMember } from '@/types';
 import { WeatherDashboard } from '@/features/weather';
 import { useWeatherStore } from '@/features/weather';
+import { getCoordinatesFromCity, type Coordinates } from '@/features/weather/geocodingService';
+
+// ─── Geocoding state shape ────────────────────────────────────────────────────
+
+type GeoState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; coords: Coordinates };
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
@@ -15,10 +26,12 @@ export function TripWorkspacePage() {
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
   const resetWeather = useWeatherStore(s => s.reset);
 
+  const [geo, setGeo] = useState<GeoState>({ status: 'idle' });
+
+  // ── Load trip + members ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!tripId) return;
 
-    // Load trip + members in parallel
     Promise.all([getTrip(tripId), getTripMembers(tripId)]).then(([tripResult, membersResult]) => {
       if (!tripResult.ok) { navigate(ROUTES.DASHBOARD); return; }
       setActiveTrip(tripResult.data);
@@ -30,6 +43,21 @@ export function TripWorkspacePage() {
       resetWeather();
     };
   }, [tripId]);
+
+  // ── Geocode destination whenever it changes ──────────────────────────────────
+  useEffect(() => {
+    if (!activeTrip?.destination) return;
+
+    setGeo({ status: 'loading' });
+
+    getCoordinatesFromCity(activeTrip.destination).then((result) => {
+      if (result.ok) {
+        setGeo({ status: 'ready', coords: result.data });
+      } else {
+        setGeo({ status: 'error', message: result.error });
+      }
+    });
+  }, [activeTrip?.destination]);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
 
@@ -59,15 +87,14 @@ export function TripWorkspacePage() {
 
       <main className="max-w-3xl mx-auto px-6 py-10 grid grid-cols-3 gap-8">
 
-        {/* Left: feature panels (week 2+) */}
+        {/* Left: feature panels */}
         <div className="col-span-2 space-y-4">
           <FeaturePlaceholder title="Bucket list" description="Add and vote on activities — coming in week 2" />
           <FeaturePlaceholder title="Timeline" description={isOwner ? 'Finalize the itinerary' : 'View the finalized plan'} locked={!isOwner} />
-          <WeatherDashboard
-            lat={activeTrip.lat ?? 28.6139} // default to Delhi if missing coords — already on Trip
-            lon={activeTrip.lon ?? 77.2090}  // default to Delhi if missing coords — already on Trip
-            date={activeTrip.startDate}       // YYYY-MM-DD — already on Trip
-          />
+
+          {/* ── Weather panel ─────────────────────────────────────────────────── */}
+          <GeoWeatherPanel geo={geo} date={activeTrip.startDate} destination={activeTrip.destination} />
+
           <FeaturePlaceholder title="Expenses" description="Track and split costs — coming in week 3" />
         </div>
 
@@ -98,6 +125,51 @@ export function TripWorkspacePage() {
         </div>
       </main>
     </div>
+  );
+}
+
+// ─── Geo-aware weather panel ───────────────────────────────────────────────────
+// Handles all three geocoding states so TripWorkspacePage stays clean.
+
+function GeoWeatherPanel({
+  geo,
+  date,
+  destination,
+}: {
+  geo: GeoState;
+  date: string;
+  destination: string;
+}) {
+  if (geo.status === 'idle' || geo.status === 'loading') {
+    return (
+      <div className="rounded-xl border border-gray-100 bg-white px-5 py-5">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Locating {destination}…
+        </div>
+      </div>
+    );
+  }
+
+  if (geo.status === 'error') {
+    return (
+      <div className="rounded-xl border border-gray-100 bg-white px-5 py-5">
+        <p className="text-sm font-medium text-gray-700 mb-1">🌍 Environmental Dashboard</p>
+        <p className="text-xs text-red-500">{geo.message}</p>
+      </div>
+    );
+  }
+
+  // status === 'ready'
+  return (
+    <WeatherDashboard
+      lat={geo.coords.lat}
+      lon={geo.coords.lon}
+      date={date}
+    />
   );
 }
 
