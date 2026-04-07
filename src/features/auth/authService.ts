@@ -5,6 +5,7 @@ import {
   GoogleAuthProvider,
   signOut as fbSignOut,
   updateProfile,
+  type User,
   type UserCredential,
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -24,6 +25,14 @@ async function createUserDocument(uid: string, displayName: string, email: strin
     doc(db, 'users', uid),
     { uid, displayName, email, createdAt: serverTimestamp() },
     { merge: true }  // idempotent — safe to call on repeated sign-ins
+  );
+}
+
+export async function ensureUserDocumentForUser(user: User): Promise<void> {
+  await createUserDocument(
+    user.uid,
+    user.displayName ?? 'Traveler',
+    user.email ?? ''
   );
 }
 
@@ -78,6 +87,7 @@ export async function signInWithEmail(
 ): Promise<Result<AppUser>> {
   try {
     const cred = await signInWithEmailAndPassword(auth, email, password);
+    await ensureUserDocumentForUser(cred.user);
     return ok(toAppUser(cred));
   } catch (e: any) {
     return err(mapAuthError(e.code));
@@ -88,11 +98,7 @@ export async function signInWithGoogle(): Promise<Result<AppUser>> {
   try {
     const cred = await signInWithPopup(auth, googleProvider);
     // For Google sign-in, create the user doc on first sign-in (merge is safe)
-    await createUserDocument(
-      cred.user.uid,
-      cred.user.displayName ?? 'Traveler',
-      cred.user.email ?? ''
-    );
+    await ensureUserDocumentForUser(cred.user);
     return ok(toAppUser(cred));
   } catch (e: any) {
     return err(mapAuthError(e.code));

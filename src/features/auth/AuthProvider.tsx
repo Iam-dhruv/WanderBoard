@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from '@/config/firebase';
+import { ensureUserDocumentForUser } from './authService';
 import type { AppUser } from '@/types';
 
 // ─── Context shape ────────────────────────────────────────────────────────────
@@ -40,6 +41,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // onAuthStateChanged fires immediately with the current user (or null),
     // then on every sign-in / sign-out. Unsubscribe on unmount.
     const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        void ensureUserDocumentForUser(fbUser).catch((error) => {
+          console.error('[AuthProvider] Failed to ensure user profile document:', error);
+        });
+      }
       setUser(fbUser ? toAppUser(fbUser) : null);
       setLoading(false);
     });

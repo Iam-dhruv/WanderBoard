@@ -190,6 +190,9 @@ export async function getUserTrips(userId: string): Promise<Result<Trip[]>> {
     return ok(trips);
   } catch (e: any) {
     console.error('[getUserTrips]', e);
+    if (e?.code === 'permission-denied') {
+      return err('Failed to load trips: permission denied. Deploy the latest Firestore rules and confirm your user profile exists.');
+    }
     return err('Failed to load trips.');
   }
 }

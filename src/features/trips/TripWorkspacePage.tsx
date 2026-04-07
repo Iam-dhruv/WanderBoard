@@ -1,16 +1,16 @@
 import { useEffect } from 'react';
-import { NavLink, Outlet, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
-import { useTripStore } from './useTripStore';
-import { getTrip, getTripMembers } from './tripService';
 import { ROUTES } from '@/config/routes';
 import type { TripMember } from '@/types';
+import { getTrip, getTripMembers } from './tripService';
+import { useTripStore } from './useTripStore';
 
 export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
-  const { user }   = useAuth();
-  const navigate   = useNavigate();
-  const location   = useLocation();
+  const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
 
   useEffect(() => {
@@ -23,12 +23,17 @@ export function TripWorkspacePage() {
       };
     }
 
-    // Load trip + members in parallel
     Promise.all([getTrip(tripId), getTripMembers(tripId)]).then(([tripResult, membersResult]) => {
       if (cancelled) return;
-      if (!tripResult.ok) { navigate(ROUTES.DASHBOARD); return; }
+      if (!tripResult.ok) {
+        navigate(ROUTES.DASHBOARD, { replace: true });
+        return;
+      }
+
       setActiveTrip(tripResult.data);
-      if (membersResult.ok) setMembers(membersResult.data);
+      if (membersResult.ok) {
+        setMembers(membersResult.data);
+      }
     });
 
     return () => {
@@ -37,25 +42,24 @@ export function TripWorkspacePage() {
     };
   }, [tripId, navigate, setActiveTrip, setMembers]);
 
-  const isDiscoveryPage = location.pathname.endsWith('/discovery');
-
   const isOwner = activeTrip?.ownerId === user?.uid;
+  const isDiscoveryRoute = location.pathname.includes('/discovery');
 
   if (!activeTrip) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-sm text-gray-400">Loading trip…</p>
+        <p className="text-sm text-gray-400">Loading trip...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={isDiscoveryRoute ? 'h-screen overflow-hidden bg-gray-50 flex flex-col' : 'min-h-screen bg-gray-50'}>
       <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4">
-        <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">← Trips</Link>
+        <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">Back to Trips</Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-base font-semibold text-gray-900 truncate">{activeTrip.name}</h1>
-          <p className="text-xs text-gray-400 truncate">{activeTrip.destination} · {activeTrip.startDate} → {activeTrip.endDate}</p>
+          <p className="text-xs text-gray-400 truncate">{activeTrip.destination} | {activeTrip.startDate} to {activeTrip.endDate}</p>
         </div>
         {isOwner && (
           <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full">
@@ -74,13 +78,13 @@ export function TripWorkspacePage() {
         </nav>
       </div>
 
-      {isDiscoveryPage ? (
-        <div className="h-[calc(100vh-8rem)]">
+      {isDiscoveryRoute ? (
+        <main className="flex-1 min-h-0">
           <Outlet />
-        </div>
+        </main>
       ) : (
-        <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-3 gap-8 items-start">
-          <section className="col-span-2 min-w-0">
+        <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <section className="lg:col-span-2 min-w-0 space-y-6">
             <Outlet />
           </section>
 
@@ -102,8 +106,8 @@ export function TripWorkspacePage() {
               )}
 
               <div className="space-y-2">
-                {members.map((m) => (
-                  <MemberRow key={m.userId} member={m} isCurrentUser={m.userId === user?.uid} />
+                {members.map((member) => (
+                  <MemberRow key={member.userId} member={member} isCurrentUser={member.userId === user?.uid} />
                 ))}
               </div>
             </div>
@@ -128,12 +132,10 @@ function TabLink({ to, label }: { to: string; label: string }) {
   );
 }
 
-// ─── Member row ────────────────────────────────────────────────────────────────
-
 function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUser: boolean }) {
   const initials = member.displayName
     .split(' ')
-    .map((n) => n[0])
+    .map((name) => name[0])
     .join('')
     .slice(0, 2)
     .toUpperCase();
@@ -149,14 +151,15 @@ function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUse
           {isCurrentUser && <span className="text-gray-400 font-normal"> (you)</span>}
         </p>
       </div>
-      <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
-        member.role === 'owner'
-          ? 'bg-indigo-50 text-indigo-600'
-          : 'bg-gray-100 text-gray-500'
-      }`}>
+      <span
+        className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
+          member.role === 'owner'
+            ? 'bg-indigo-50 text-indigo-600'
+            : 'bg-gray-100 text-gray-500'
+        }`}
+      >
         {member.role}
       </span>
     </div>
   );
 }
-

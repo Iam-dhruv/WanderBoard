@@ -1,12 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
+import { ensureUserDocumentForUser } from '@/features/auth/authService';
+import { auth } from '@/config/firebase';
 import { useTripStore } from './useTripStore';
 import { getUserTrips, createTrip, joinTrip } from './tripService';
 import { signOut } from '@/features/auth/authService';
 import { ROUTES } from '@/config/routes';
 import { useJsApiLoader } from '@react-google-maps/api';
 import type { Trip } from '@/types';
+
+const CREATE_TRIP_MAP_LIBRARIES: ('places')[] = ['places'];
+
+function normalizeCity(city: string): string {
+  return city.replace(/\s+/g, ' ').trim();
+}
+
+function parseCityTokens(rawValue: string): string[] {
+  return rawValue
+    .split(';')
+    .map(normalizeCity)
+    .filter(Boolean);
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -20,11 +35,29 @@ export function DashboardPage() {
   // Load trips on mount
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+
     setLoading(true);
-    getUserTrips(user.uid).then((result) => {
+
+    (async () => {
+      if (auth.currentUser) {
+        try {
+          await ensureUserDocumentForUser(auth.currentUser);
+        } catch (error) {
+          console.error('[DashboardPage] Failed to ensure user profile document:', error);
+        }
+      }
+
+      const result = await getUserTrips(user.uid);
+      if (cancelled) return;
+
       if (result.ok) setTrips(result.data);
       else setError(result.error);
-    });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   async function handleSignOut() {
@@ -174,7 +207,8 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   userId: any; onClose: () => void; onCreated: (t: Trip) => void;
 }) {
   const [name, setName]               = useState('');
-  const [destination, setDestination] = useState('');
+  const [destinationInput, setDestinationInput] = useState('');
+  const [destinationCities, setDestinationCities] = useState<string[]>([]);
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
   const [error, setError]             = useState('');
@@ -186,8 +220,35 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
-    libraries: ['maps', 'places'],
+    libraries: CREATE_TRIP_MAP_LIBRARIES,
   });
+
+  function addDestinationCity(city: string) {
+    const normalized = normalizeCity(city);
+    if (!normalized) return;
+
+    setDestinationCities((previous) => {
+      if (previous.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
+        return previous;
+      }
+      return [...previous, normalized];
+    });
+  }
+
+  function commitDestinationInput() {
+    const parsed = parseCityTokens(destinationInput);
+    if (parsed.length === 0) {
+      setDestinationInput('');
+      return;
+    }
+
+    parsed.forEach(addDestinationCity);
+    setDestinationInput('');
+  }
+
+  function removeDestinationCity(indexToRemove: number) {
+    setDestinationCities((previous) => previous.filter((_, index) => index !== indexToRemove));
+  }
 
   useEffect(() => {
     if (!isLoaded || !destinationInputRef.current || autocompleteRef.current) return;
@@ -209,7 +270,10 @@ function CreateTripModal({ userId, onClose, onCreated }: {
       listener = autocomplete.addListener('place_changed', () => {
         const place = autocomplete.getPlace();
         if (!place?.formatted_address) return;
-        setDestination(place.formatted_address);
+
+        addDestinationCity(place.formatted_address);
+        setDestinationInput('');
+        window.setTimeout(() => destinationInputRef.current?.focus(), 0);
       });
     } catch (error) {
       console.error('[CreateTripModal] Places autocomplete init failed:', error);
@@ -223,10 +287,19 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const trimmedDestination = destination.trim();
+    const pendingInputCities = parseCityTokens(destinationInput);
+    const mergedCities = [...destinationCities];
+
+    for (const city of pendingInputCities) {
+      if (!mergedCities.some((existing) => existing.toLowerCase() === city.toLowerCase())) {
+        mergedCities.push(city);
+      }
+    }
+
+    const trimmedDestination = mergedCities.join('; ');
 
     if (!trimmedDestination) {
-      setError('Please enter a destination.');
+      setError('Please add at least one city.');
       return;
     }
 
@@ -257,16 +330,50 @@ function CreateTripModal({ userId, onClose, onCreated }: {
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Trip name" id="tname"><input id="tname" required value={name} onChange={e=>setName(e.target.value)} className={inputCls} placeholder="Himachal Adventure"/></Field>
         <Field label="Destination" id="dest">
-          <input
-            id="dest"
-            ref={destinationInputRef}
-            required
-            value={destination}
-            onChange={(e) => setDestination(e.target.value)}
-            className={inputCls}
-            placeholder="Enter city, region, or destination"
-            autoComplete="off"
-          />
+          <div
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-indigo-500 min-h-[42px] flex flex-wrap items-center gap-2 cursor-text"
+            onClick={() => destinationInputRef.current?.focus()}
+          >
+            {destinationCities.map((city, index) => (
+              <span
+                key={`${city}-${index}`}
+                className="inline-flex items-center gap-2 rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-1 text-xs"
+              >
+                {city}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeDestinationCity(index);
+                  }}
+                  className="rounded-full text-indigo-500 hover:text-indigo-700 focus:outline-none"
+                  aria-label={`Remove ${city}`}
+                >
+                  x
+                </button>
+              </span>
+            ))}
+
+            <input
+              id="dest"
+              ref={destinationInputRef}
+              value={destinationInput}
+              onChange={(event) => setDestinationInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ';' || event.key === 'Tab') {
+                  if (destinationInput.trim()) {
+                    event.preventDefault();
+                    commitDestinationInput();
+                  }
+                } else if (event.key === 'Backspace' && !destinationInput && destinationCities.length > 0) {
+                  removeDestinationCity(destinationCities.length - 1);
+                }
+              }}
+              className="flex-1 min-w-[12rem] border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
+              placeholder={destinationCities.length > 0 ? 'Add another city...' : 'Type and press Enter to add city'}
+              autoComplete="off"
+            />
+          </div>
           {loadError && (
             <p className="mt-2 text-xs text-yellow-700">Autocomplete is unavailable; please type a destination manually.</p>
           )}

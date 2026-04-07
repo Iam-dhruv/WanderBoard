@@ -2,19 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { DiscoveryList } from '@/features/discovery/components/DiscoveryList';
 import type { Place } from '@/features/discovery/types';
-import { useTripStore } from './useTripStore';
+import { useTripStore } from '@/features/trips/useTripStore';
 
 const MAP_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
-const SEARCH_DEBOUNCE_MS = 350;
+const FALLBACK_PHOTO_URL = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80';
+const SEARCH_DEBOUNCE_MS = 400;
 const MIN_RADIUS_METERS = 500;
 const MAX_RADIUS_METERS = 50000;
-
-function getPrimaryDestination(destination: string): string {
-  return destination
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)[0] ?? destination.trim();
-}
 
 function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
   if (!result.place_id || !result.name) {
@@ -22,13 +16,13 @@ function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
   }
 
   const photo = result.photos?.[0];
-  let photoUrl = '';
+  let photoUrl = FALLBACK_PHOTO_URL;
 
   if (photo) {
     try {
       photoUrl = photo.getUrl({ maxWidth: 800, maxHeight: 600 });
     } catch {
-      photoUrl = '';
+      photoUrl = FALLBACK_PHOTO_URL;
     }
   }
 
@@ -47,7 +41,7 @@ function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
   };
 }
 
-export function TripDiscoveryPage() {
+export function DiscoveryPage() {
   const { activeTrip } = useTripStore();
   const [tripLocation, setTripLocation] = useState<google.maps.LatLngLiteral | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -74,7 +68,7 @@ export function TripDiscoveryPage() {
     setMapError(null);
 
     const geocoder = new window.google.maps.Geocoder();
-    geocoder.geocode({ address: getPrimaryDestination(activeTrip.destination) }, (results, status) => {
+    geocoder.geocode({ address: activeTrip.destination }, (results, status) => {
       if (status === 'OK' && results?.[0]?.geometry?.location) {
         setTripLocation({
           lat: results[0].geometry.location.lat(),
@@ -225,11 +219,10 @@ export function TripDiscoveryPage() {
             )}
           </GoogleMap>
 
-          <div className="absolute inset-x-3 top-3 bottom-3 z-10 sm:inset-y-4 sm:left-4 sm:right-auto sm:w-[min(92vw,28rem)] rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
-            <div className="space-y-1">
+          <div className="absolute inset-y-4 left-4 z-10 w-[min(92vw,28rem)] rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
+            <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Discovery</p>
               <h2 className="text-lg font-semibold text-gray-900">Nearby places</h2>
-              <p className="text-xs text-gray-500">Search region follows the visible map window.</p>
             </div>
 
             <div className="mt-4">
@@ -253,7 +246,7 @@ export function TripDiscoveryPage() {
               )}
             </div>
 
-            <div className="mt-4 h-[calc(100%-12.5rem)] overflow-y-auto pr-1">
+            <div className="mt-4 h-[calc(100%-11.5rem)] overflow-y-auto pr-1">
               <DiscoveryList
                 tripId={activeTrip.id}
                 places={places}
