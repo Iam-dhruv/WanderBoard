@@ -5,12 +5,15 @@ import { useTripStore } from './useTripStore';
 import { getTrip, getTripMembers } from './tripService';
 import { ROUTES } from '@/config/routes';
 import type { TripMember } from '@/types';
+import { WeatherDashboard } from '@/features/weather';
+import { useWeatherStore } from '@/features/weather';
 
 export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
   const { user }   = useAuth();
   const navigate   = useNavigate();
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
+  const resetWeather = useWeatherStore(s => s.reset);
 
   useEffect(() => {
     if (!tripId) return;
@@ -22,7 +25,10 @@ export function TripWorkspacePage() {
       if (membersResult.ok) setMembers(membersResult.data);
     });
 
-    return () => setActiveTrip(null);
+    return () => {
+      setActiveTrip(null);
+      resetWeather();
+    };
   }, [tripId]);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
@@ -57,7 +63,11 @@ export function TripWorkspacePage() {
         <div className="col-span-2 space-y-4">
           <FeaturePlaceholder title="Bucket list" description="Add and vote on activities — coming in week 2" />
           <FeaturePlaceholder title="Timeline" description={isOwner ? 'Finalize the itinerary' : 'View the finalized plan'} locked={!isOwner} />
-          <FeaturePlaceholder title="Weather & alerts" description="Environmental data dashboard — coming in week 2" />
+          <WeatherDashboard
+            lat={activeTrip.lat ?? 28.6139} // default to Delhi if missing coords — already on Trip
+            lon={activeTrip.lon ?? 77.2090}  // default to Delhi if missing coords — already on Trip
+            date={activeTrip.startDate}       // YYYY-MM-DD — already on Trip
+          />
           <FeaturePlaceholder title="Expenses" description="Track and split costs — coming in week 3" />
         </div>
 
