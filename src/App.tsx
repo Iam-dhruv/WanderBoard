@@ -10,36 +10,45 @@ import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
 import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
 import { ExpensesPage } from '@/features/expenses/ExpensesPage';
 import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
+import { TimelinePage } from '@/features/timeline/TimelinePage';
 import { ROUTES } from '@/config/routes';
 
 export default function App() {
   return (
-    // AuthProvider must wrap the router so all route components can call useAuth()
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public routes — redirect to dashboard if already signed in */}
-          <Route path={ROUTES.LOGIN}    element={<LoginPage />} />
+          {/* Public routes */}
+          <Route path={ROUTES.LOGIN} element={<LoginPage />} />
           <Route path={ROUTES.REGISTER} element={<RegisterPage />} />
 
-          {/* Protected routes — ProtectedRoute redirects to /login if not authed */}
+          {/* Protected routes */}
           <Route element={<ProtectedRoute />}>
             <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
+
             <Route path={ROUTES.TRIP} element={<TripWorkspacePage />}>
               <Route index element={<Navigate to="planning" replace />} />
+
               <Route path="planning" element={<TripPlanningPage />} />
               <Route path="bucket-list" element={<TripBucketListPage />} />
               <Route path="discovery" element={<TripDiscoveryPage />} />
+
+              {/* ✅ Timeline (new feature) */}
+              <Route path="timeline" element={<TimelinePage />} />
+
+              {/* ✅ Keep actual Expenses feature (NOT placeholder) */}
               <Route path="expenses" element={<ExpensesPage />} />
+
               <Route
                 path="contingency"
-                element={(
+                element={
                   <TripFeaturePlaceholderPage
                     title="Contingency"
                     description="Weather-based warnings and trip contingency planning will live here."
                   />
-                )}
+                }
               />
+
               <Route path="*" element={<Navigate to="planning" replace />} />
             </Route>
           </Route>
