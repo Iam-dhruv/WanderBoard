@@ -4,13 +4,15 @@ import type { Settlement } from '@/features/expenses/types';
 interface SettlementSummaryProps {
   settlements: Settlement[];
   members: TripMember[];
+  onSettleOutstanding: () => Promise<void>;
+  onSettleOne: (settlement: Settlement) => Promise<void>;
 }
 
 function nameById(userId: string, members: TripMember[]): string {
   return members.find((member) => member.userId === userId)?.displayName ?? 'Traveler';
 }
 
-export function SettlementSummary({ settlements, members }: SettlementSummaryProps) {
+export function SettlementSummary({ settlements, members, onSettleOutstanding, onSettleOne }: SettlementSummaryProps) {
   return (
     <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -23,7 +25,17 @@ export function SettlementSummary({ settlements, members }: SettlementSummaryPro
           Everyone is settled up.
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => {
+              void onSettleOutstanding();
+            }}
+            className="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+          >
+            Mark all suggested settlements as settled
+          </button>
+
           {settlements.map((settlement, index) => (
             <div key={`${settlement.fromUser}-${settlement.toUser}-${index}`} className="rounded-lg border border-gray-100 px-3 py-2">
               <p className="text-sm text-gray-700">
@@ -31,7 +43,18 @@ export function SettlementSummary({ settlements, members }: SettlementSummaryPro
                 {' pays '}
                 <span className="font-semibold text-emerald-600">{nameById(settlement.toUser, members)}</span>
               </p>
-              <p className="mt-1 text-xs font-medium text-gray-500">Amount {settlement.amount.toFixed(2)}</p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-gray-500">Amount {settlement.amount.toFixed(2)}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onSettleOne(settlement);
+                  }}
+                  className="rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                >
+                  Mark settled
+                </button>
+              </div>
             </div>
           ))}
         </div>

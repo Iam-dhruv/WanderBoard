@@ -8,7 +8,7 @@ import { ExpenseList } from '@/features/expenses/components/ExpenseList';
 import { ExpenseChart } from '@/features/expenses/components/ExpenseChart';
 import { IndividualBreakdown } from '@/features/expenses/components/IndividualBreakdown';
 import { useExpenseStore } from '@/features/expenses/useExpenseStore';
-import type { ExpenseInput } from '@/features/expenses/types';
+import type { ExpenseInput, Settlement } from '@/features/expenses/types';
 
 export function ExpensesPage() {
   const { user } = useAuth();
@@ -22,6 +22,8 @@ export function ExpensesPage() {
     hydrate,
     addExpense,
     deleteExpense,
+    settleExpenses,
+    settleOneSuggestion,
     recalculate,
     reset,
   } = useExpenseStore();
@@ -47,7 +49,7 @@ export function ExpensesPage() {
   }, [members]);
 
   const totalExpense = useMemo(
-    () => expenses.reduce((sum, expense) => sum + expense.amount, 0),
+    () => expenses.filter((expense) => expense.entryType !== 'settlement').reduce((sum, expense) => sum + expense.amount, 0),
     [expenses],
   );
 
@@ -63,6 +65,14 @@ export function ExpensesPage() {
 
   const handleDeleteExpense = async (expenseId: string) => {
     await deleteExpense(activeTrip.id, expenseId, members);
+  };
+
+  const handleSettleExpenses = async () => {
+    await settleExpenses(activeTrip.id, members);
+  };
+
+  const handleSettleOneSuggestion = async (settlement: Settlement) => {
+    await settleOneSuggestion(activeTrip.id, settlement, members);
   };
 
   return (
@@ -107,7 +117,12 @@ export function ExpensesPage() {
           <IndividualBreakdown expenses={expenses} members={members} />
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <SettlementSummary settlements={settlements} members={members} />
+            <SettlementSummary
+              settlements={settlements}
+              members={members}
+              onSettleOutstanding={handleSettleExpenses}
+              onSettleOne={handleSettleOneSuggestion}
+            />
             <BalanceLedger balances={balances} members={members} />
           </div>
 

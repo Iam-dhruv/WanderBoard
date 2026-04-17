@@ -29,6 +29,7 @@ export interface ExpenseSplit {
 export interface Expense {
   id: string;
   tripId: string;
+  entryType?: 'expense' | 'settlement';
   paidBy: string;
   amount: number;
   category: ExpenseCategoryKey;
@@ -46,6 +47,13 @@ export interface Settlement {
   fromUser: string;
   toUser: string;
   amount: number;
+}
+
+export interface SettlementPaymentInput {
+  fromUser: string;
+  toUser: string;
+  amount: number;
+  date: number;
 }
 
 export interface SettlementResult {

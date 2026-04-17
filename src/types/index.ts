@@ -8,6 +8,7 @@ export interface Trip {
   id: string;
   name: string;
   destination: string;
+  currency: string;
   startDate: string;         // ISO date string "YYYY-MM-DD"
   endDate: string;
   inviteCode: string;        // 6-char alphanumeric, uppercase

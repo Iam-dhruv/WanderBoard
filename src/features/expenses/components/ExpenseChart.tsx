@@ -21,10 +21,12 @@ const COLORS = [
 ];
 
 export function ExpenseChart({ expenses, members }: ExpenseChartProps) {
+  const chartExpenses = expenses.filter((expense) => expense.entryType !== 'settlement');
+
   // Calculate expenses by category
   const categoryData = Object.keys(EXPENSE_CATEGORIES).map((categoryKey, index) => {
     const category = EXPENSE_CATEGORIES[categoryKey as keyof typeof EXPENSE_CATEGORIES];
-    const total = expenses
+    const total = chartExpenses
       .filter(expense => expense.category === categoryKey)
       .reduce((sum, expense) => sum + expense.amount, 0);
 
@@ -36,11 +38,12 @@ export function ExpenseChart({ expenses, members }: ExpenseChartProps) {
     };
   }).filter(item => item.value > 0);
 
-  // Calculate expenses by member
+  // Calculate owed share by member from split amounts.
   const memberData = members.map(member => {
-    const total = expenses
-      .filter(expense => expense.paidBy === member.userId)
-      .reduce((sum, expense) => sum + expense.amount, 0);
+    const total = chartExpenses.reduce((sum, expense) => {
+      const split = expense.splits.find((item) => item.userId === member.userId);
+      return sum + (split?.amount ?? 0);
+    }, 0);
 
     return {
       name: member.displayName || member.email || 'Unknown',
@@ -48,14 +51,18 @@ export function ExpenseChart({ expenses, members }: ExpenseChartProps) {
     };
   }).filter(item => item.total > 0);
 
-  // Calculate expenses by member and category
+  // Calculate owed share by member and category from splits.
   const memberCategoryData = members.map(member => {
-    const memberExpenses = expenses.filter(expense => expense.paidBy === member.userId);
     const data: Record<string, number> = {};
 
-    memberExpenses.forEach(expense => {
+    chartExpenses.forEach(expense => {
+      const split = expense.splits.find((item) => item.userId === member.userId);
+      if (!split) {
+        return;
+      }
+
       const category = EXPENSE_CATEGORIES[expense.category].label;
-      data[category] = (data[category] || 0) + expense.amount;
+      data[category] = (data[category] || 0) + split.amount;
     });
 
     return {
@@ -64,7 +71,7 @@ export function ExpenseChart({ expenses, members }: ExpenseChartProps) {
     };
   }).filter(item => Object.keys(item).length > 1); // Has expenses
 
-  if (expenses.length === 0) {
+  if (chartExpenses.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center rounded-xl border border-gray-100 bg-gray-50">
         <div className="text-center">

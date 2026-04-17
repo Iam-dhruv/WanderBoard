@@ -8,6 +8,7 @@ import { getUserTrips, createTrip, joinTrip } from './tripService';
 import { signOut } from '@/features/auth/authService';
 import { ROUTES } from '@/config/routes';
 import { useJsApiLoader } from '@react-google-maps/api';
+import { DEFAULT_TRIP_CURRENCY, TRIP_CURRENCY_OPTIONS } from '@/lib/currency';
 import type { Trip } from '@/types';
 
 const CREATE_TRIP_MAP_LIBRARIES: ('places')[] = ['places'];
@@ -187,6 +188,7 @@ function TripCard({ trip, ownerId, onClick }: { trip: Trip; ownerId: string; onC
         <div>
           <p className="font-medium text-gray-900">{trip.name}</p>
           <p className="text-sm text-gray-500 mt-0.5">{trip.destination}</p>
+          <p className="text-xs text-gray-400 mt-1">Currency: {trip.currency}</p>
         </div>
         <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
           isOwner
@@ -211,6 +213,7 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   const [destinationCities, setDestinationCities] = useState<string[]>([]);
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
+  const [currency, setCurrency]       = useState(DEFAULT_TRIP_CURRENCY);
   const [error, setError]             = useState('');
   const [loading, setLoading]         = useState(false);
 
@@ -312,6 +315,7 @@ function CreateTripModal({ userId, onClose, onCreated }: {
     const result = await createTrip({
       name,
       destination: trimmedDestination,
+      currency,
       startDate,
       endDate,
       ownerId: userId.uid,
@@ -380,6 +384,15 @@ function CreateTripModal({ userId, onClose, onCreated }: {
           {!loadError && !isLoaded && (
             <p className="mt-2 text-xs text-gray-500">Loading place suggestions…</p>
           )}
+        </Field>
+        <Field label="Currency" id="currency">
+          <select id="currency" value={currency} onChange={(event) => setCurrency(event.target.value)} className={inputCls}>
+            {TRIP_CURRENCY_OPTIONS.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start date" id="sd"><input id="sd" type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)} className={inputCls}/></Field>

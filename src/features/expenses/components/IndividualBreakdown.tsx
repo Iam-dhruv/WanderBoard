@@ -8,23 +8,31 @@ interface IndividualBreakdownProps {
 }
 
 export function IndividualBreakdown({ expenses, members }: IndividualBreakdownProps) {
-  // Calculate expenses by member and category
+  const breakdownExpenses = expenses.filter((expense) => expense.entryType !== 'settlement');
+
+  // Calculate owed share by member and category
   const memberCategoryTotals = members.map(member => {
-    const memberExpenses = expenses.filter(expense => expense.paidBy === member.userId);
     const categoryTotals: Record<string, number> = {};
     let totalSpent = 0;
+    let expenseCount = 0;
 
-    memberExpenses.forEach(expense => {
+    breakdownExpenses.forEach(expense => {
+      const split = expense.splits.find((item) => item.userId === member.userId);
+      if (!split) {
+        return;
+      }
+
       const category = EXPENSE_CATEGORIES[expense.category].label;
-      categoryTotals[category] = (categoryTotals[category] || 0) + expense.amount;
-      totalSpent += expense.amount;
+      categoryTotals[category] = (categoryTotals[category] || 0) + split.amount;
+      totalSpent += split.amount;
+      expenseCount += 1;
     });
 
     return {
       member,
       categoryTotals,
       totalSpent,
-      expenseCount: memberExpenses.length,
+      expenseCount,
     };
   }).filter(item => item.totalSpent > 0);
 

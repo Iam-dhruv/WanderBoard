@@ -8,10 +8,12 @@ import {
   orderBy,
   query,
   updateDoc,
+  where,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { err, ok, type Result } from '@/types';
-import type { Expense, ExpenseInput } from '@/features/expenses/types';
+import type { Expense, ExpenseInput, SettlementPaymentInput } from '@/features/expenses/types';
 
 const expensesCol = (tripId: string) => collection(db, 'trips', tripId, 'expenses');
 const expenseDoc = (tripId: string, expenseId: string) => doc(db, 'trips', tripId, 'expenses', expenseId);
@@ -21,6 +23,7 @@ function toExpense(id: string, data: Record<string, unknown>): Expense {
   return {
     id,
     tripId: String(data.tripId ?? ''),
+    entryType: (data.entryType as Expense['entryType']) ?? 'expense',
     paidBy: String(data.paidBy ?? ''),
     amount: Number(data.amount ?? 0),
     category: data.category as Expense['category'],
@@ -42,6 +45,41 @@ function toExpense(id: string, data: Record<string, unknown>): Expense {
     createdAt: Number(data.createdAt ?? now),
     updatedAt: Number(data.updatedAt ?? now),
   };
+}
+
+export async function createSettlementPayment(
+  tripId: string,
+  input: SettlementPaymentInput,
+): Promise<Result<Expense>> {
+  try {
+    const now = Date.now();
+    const payload = {
+      tripId,
+      entryType: 'settlement' as const,
+      paidBy: input.fromUser,
+      amount: input.amount,
+      category: 'other' as const,
+      subcategory: 'Settlement',
+      description: 'Settlement payment',
+      date: input.date,
+      splitType: 'fixed' as const,
+      splits: [
+        {
+          userId: input.toUser,
+          amount: input.amount,
+        },
+      ],
+      settled: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const ref = await addDoc(expensesCol(tripId), payload);
+    return ok(toExpense(ref.id, payload));
+  } catch (e: any) {
+    console.error('[createSettlementPayment]', e);
+    return err('Failed to mark settlement as paid. Please retry.');
+  }
 }
 
 export async function createExpense(tripId: string, input: ExpenseInput): Promise<Result<Expense>> {
@@ -87,6 +125,33 @@ export async function removeExpense(tripId: string, expenseId: string): Promise<
   } catch (e: any) {
     console.error('[removeExpense]', e);
     return err('Failed to delete expense.');
+  }
+}
+
+export async function settleOutstandingExpenses(tripId: string): Promise<Result<number>> {
+  try {
+    const unsettledQuery = query(expensesCol(tripId), where('settled', '==', false));
+    const snap = await getDocs(unsettledQuery);
+
+    if (snap.empty) {
+      return ok(0);
+    }
+
+    const batch = writeBatch(db);
+    const now = Date.now();
+
+    snap.docs.forEach((item) => {
+      batch.update(item.ref, {
+        settled: true,
+        updatedAt: now,
+      });
+    });
+
+    await batch.commit();
+    return ok(snap.docs.length);
+  } catch (e: any) {
+    console.error('[settleOutstandingExpenses]', e);
+    return err('Failed to settle outstanding expenses.');
   }
 }
 
