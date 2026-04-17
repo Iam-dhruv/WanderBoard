@@ -18,8 +18,13 @@ service cloud.firestore {
     // Is the requesting user a member of this trip?
     // Reads the memberIds array on the trip document — fast indexed query.
     function isTripMember(tripId) {
-      return isAuthed() &&
-        request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.memberIds;
+      return isAuthed() && exists(/databases/$(database)/documents/trips/$(tripId)) && (
+        (
+          get(/databases/$(database)/documents/trips/$(tripId)).data.memberIds is list
+          && request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.memberIds
+        )
+        || exists(/databases/$(database)/documents/trips/$(tripId)/members/$(request.auth.uid))
+      );
     }
 
     // Is the requesting user the owner of this trip?
@@ -125,6 +130,76 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).changedKeys()
         .hasOnly(['weather'])
         && isValidBucketWeather(request.resource.data);
+    }
+
+    function isValidExpenseSplit(split) {
+      return split is map
+        && split.keys().hasAll(['userId', 'amount'])
+        && split.userId is string
+        && split.amount is number
+        && split.amount >= 0
+        && (!split.keys().hasAny(['percentage']) || split.percentage is number);
+    }
+
+    function isValidExpenseSplitType(splitType) {
+      return splitType in ['equal', 'percentage', 'fixed'];
+    }
+
+    function isValidExpenseCreate(tripId) {
+      let d = request.resource.data;
+      return d.keys().hasAll([
+        'tripId', 'paidBy', 'amount', 'category', 'subcategory', 'description',
+        'date', 'splitType', 'splits', 'settled', 'createdAt', 'updatedAt'
+      ])
+      && d.tripId == tripId
+      && d.paidBy == request.auth.uid
+      && d.amount is number
+      && d.amount > 0
+      && d.category is string
+      && d.subcategory is string
+      && d.description is string
+      && d.date is number
+      && d.splitType is string
+      && isValidExpenseSplitType(d.splitType)
+      && d.splits is list
+      && d.splits.size() > 0
+      && d.settled is bool
+      && d.createdAt is number
+      && d.updatedAt is number;
+    }
+
+    function isValidExpenseUpdate() {
+      let d = request.resource.data;
+      return d.keys().hasAll([
+        'tripId', 'paidBy', 'amount', 'category', 'subcategory', 'description',
+        'date', 'splitType', 'splits', 'settled', 'createdAt', 'updatedAt'
+      ])
+      && d.tripId == resource.data.tripId
+      && d.paidBy == resource.data.paidBy
+      && d.amount is number
+      && d.amount > 0
+      && d.category is string
+      && d.subcategory is string
+      && d.description is string
+      && d.date is number
+      && d.splitType is string
+      && isValidExpenseSplitType(d.splitType)
+      && d.splits is list
+      && d.splits.size() > 0
+      && d.splits[0] is map
+      && isValidExpenseSplit(d.splits[0])
+      && (d.splits.size() < 2 || isValidExpenseSplit(d.splits[1]))
+      && (d.splits.size() < 3 || isValidExpenseSplit(d.splits[2]))
+      && (d.splits.size() < 4 || isValidExpenseSplit(d.splits[3]))
+      && (d.splits.size() < 5 || isValidExpenseSplit(d.splits[4]))
+      && (d.splits.size() < 6 || isValidExpenseSplit(d.splits[5]))
+      && (d.splits.size() < 7 || isValidExpenseSplit(d.splits[6]))
+      && (d.splits.size() < 8 || isValidExpenseSplit(d.splits[7]))
+      && (d.splits.size() < 9 || isValidExpenseSplit(d.splits[8]))
+      && (d.splits.size() < 10 || isValidExpenseSplit(d.splits[9]))
+      && d.settled is bool
+      && d.createdAt is number
+      && d.updatedAt is number;
     }
 
     function isValidUserDataUpdate(tripId) {
@@ -243,6 +318,27 @@ service cloud.firestore {
           allow update: if false;
           allow delete: if isTripOwner(tripId) || request.auth.uid == resource.data.userId;
         }
+      }
+
+      // ─── /trips/{tripId}/expenses/{expenseId} ─────────────────────────────
+
+      match /expenses/{expenseId} {
+        allow read: if isTripMember(tripId);
+
+        allow create: if isTripMember(tripId)
+                      && isValidExpenseCreate(tripId);
+
+        allow update: if (isTripOwner(tripId) || request.auth.uid == resource.data.paidBy)
+                      && isValidExpenseUpdate();
+
+        allow delete: if isTripOwner(tripId) || request.auth.uid == resource.data.paidBy;
+      }
+
+      // ─── /trips/{tripId}/settlements/{settlementId} ───────────────────────
+
+      match /settlements/{settlementId} {
+        allow read: if isTripMember(tripId);
+        allow create, update, delete: if isTripOwner(tripId);
       }
     }
 

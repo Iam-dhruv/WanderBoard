@@ -5,9 +5,10 @@ import { LoginPage } from '@/features/auth/LoginPage';
 import { RegisterPage } from '@/features/auth/RegisterPage';
 import { DashboardPage } from '@/features/trips/DashboardPage';
 import { TripWorkspacePage } from '@/features/trips/TripWorkspacePage';
-import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
 import { TripBucketListPage } from '@/features/trips/TripBucketListPage';
+import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
 import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
+import { ExpensesPage } from '@/features/expenses/ExpensesPage';
 import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
 import { ROUTES } from '@/config/routes';
 
@@ -29,15 +30,7 @@ export default function App() {
               <Route path="planning" element={<TripPlanningPage />} />
               <Route path="bucket-list" element={<TripBucketListPage />} />
               <Route path="discovery" element={<TripDiscoveryPage />} />
-              <Route
-                path="expenses"
-                element={(
-                  <TripFeaturePlaceholderPage
-                    title="Expenses"
-                    description="Expense splitting and settlement will be wired into this tab."
-                  />
-                )}
-              />
+              <Route path="expenses" element={<ExpensesPage />} />
               <Route
                 path="contingency"
                 element={(
