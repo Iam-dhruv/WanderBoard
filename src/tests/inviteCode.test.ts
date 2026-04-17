@@ -35,7 +35,7 @@ describe('isValidInviteCode', () => {
   it('accepts valid codes', () => {
     expect(isValidInviteCode('XJ92L1')).toBe(false); // L is excluded
     expect(isValidInviteCode('XJ92P3')).toBe(true);
-    expect(isValidInviteCode('ABCDEF')).toBe(false); // I excluded... wait, A-F all valid
+    expect(isValidInviteCode('ABCDEF')).toBe(true);
     expect(isValidInviteCode('ABCDHJ')).toBe(true);
   });
 

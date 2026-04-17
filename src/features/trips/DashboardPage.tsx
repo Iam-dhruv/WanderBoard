@@ -1,11 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
+import { ensureUserDocumentForUser } from '@/features/auth/authService';
+import { auth } from '@/config/firebase';
 import { useTripStore } from './useTripStore';
 import { getUserTrips, createTrip, joinTrip } from './tripService';
 import { signOut } from '@/features/auth/authService';
 import { ROUTES } from '@/config/routes';
+import { useJsApiLoader } from '@react-google-maps/api';
 import type { Trip } from '@/types';
+
+const CREATE_TRIP_MAP_LIBRARIES: ('places')[] = ['places'];
+
+function normalizeCity(city: string): string {
+  return city.replace(/\s+/g, ' ').trim();
+}
+
+function parseCityTokens(rawValue: string): string[] {
+  return rawValue
+    .split(';')
+    .map(normalizeCity)
+    .filter(Boolean);
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -14,15 +30,34 @@ export function DashboardPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin]     = useState(false);
+  const [activeTab, setActiveTab]   = useState<'owned' | 'member'>('owned');
 
   // Load trips on mount
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+
     setLoading(true);
-    getUserTrips(user.uid).then((result) => {
+
+    (async () => {
+      if (auth.currentUser) {
+        try {
+          await ensureUserDocumentForUser(auth.currentUser);
+        } catch (error) {
+          console.error('[DashboardPage] Failed to ensure user profile document:', error);
+        }
+      }
+
+      const result = await getUserTrips(user.uid);
+      if (cancelled) return;
+
       if (result.ok) setTrips(result.data);
       else setError(result.error);
-    });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   async function handleSignOut() {
@@ -30,6 +65,10 @@ export function DashboardPage() {
     reset();
     navigate(ROUTES.LOGIN, { replace: true });
   }
+
+  const ownedTrips = trips.filter((trip) => trip.ownerId === user?.uid);
+  const memberTrips = trips.filter((trip) => trip.ownerId !== user?.uid);
+  const visibleTrips = activeTab === 'owned' ? ownedTrips : memberTrips;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -58,7 +97,7 @@ export function DashboardPage() {
               onClick={() => setShowCreate(true)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
             >
-              New trip
+              Create team
             </button>
           </div>
         </div>
@@ -66,19 +105,52 @@ export function DashboardPage() {
         {tripsLoading && <p className="text-sm text-gray-400">Loading…</p>}
         {tripsError   && <p className="text-sm text-red-600">{tripsError}</p>}
 
+        {!tripsLoading && trips.length > 0 && (
+          <div className="mb-5 inline-flex rounded-lg border border-gray-200 bg-white p-1">
+            <button
+              onClick={() => setActiveTab('owned')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                activeTab === 'owned' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100',
+              ].join(' ')}
+            >
+              Created by you ({ownedTrips.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('member')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                activeTab === 'member' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100',
+              ].join(' ')}
+            >
+              You are a member ({memberTrips.length})
+            </button>
+          </div>
+        )}
+
         {!tripsLoading && trips.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-200 py-16 text-center">
             <p className="text-gray-400 text-sm">No trips yet — create one or join with a code.</p>
           </div>
         )}
 
+        {!tripsLoading && trips.length > 0 && visibleTrips.length === 0 && (
+          <div className="rounded-xl border border-dashed border-gray-200 py-14 text-center">
+            <p className="text-gray-400 text-sm">
+              {activeTab === 'owned'
+                ? 'You have not created any trips yet.'
+                : 'You have not joined any trips yet.'}
+            </p>
+          </div>
+        )}
+
         <div className="space-y-3">
-          {trips.map((trip) => (
+          {visibleTrips.map((trip) => (
             <TripCard
               key={trip.id}
               trip={trip}
               ownerId={user!.uid}
-              onClick={() => navigate(ROUTES.trip(trip.id))}
+              onClick={() => navigate(ROUTES.tripPlanning(trip.id))}
             />
           ))}
         </div>
@@ -88,14 +160,14 @@ export function DashboardPage() {
         <CreateTripModal
           userId={user!}
           onClose={() => setShowCreate(false)}
-          onCreated={(t) => { addTrip(t); setShowCreate(false); navigate(ROUTES.trip(t.id)); }}
+          onCreated={(t) => { addTrip(t); setShowCreate(false); navigate(ROUTES.tripPlanning(t.id)); }}
         />
       )}
       {showJoin && (
         <JoinTripModal
           user={user!}
           onClose={() => setShowJoin(false)}
-          onJoined={(t) => { addTrip(t); setShowJoin(false); navigate(ROUTES.trip(t.id)); }}
+          onJoined={(t) => { addTrip(t); setShowJoin(false); navigate(ROUTES.tripPlanning(t.id)); }}
         />
       )}
     </div>
@@ -135,22 +207,113 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   userId: any; onClose: () => void; onCreated: (t: Trip) => void;
 }) {
   const [name, setName]               = useState('');
-  const [destination, setDestination] = useState('');
+  const [destinationInput, setDestinationInput] = useState('');
+  const [destinationCities, setDestinationCities] = useState<string[]>([]);
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
   const [error, setError]             = useState('');
   const [loading, setLoading]         = useState(false);
 
+  const destinationInputRef = useRef<HTMLInputElement | null>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
+    libraries: CREATE_TRIP_MAP_LIBRARIES,
+  });
+
+  function addDestinationCity(city: string) {
+    const normalized = normalizeCity(city);
+    if (!normalized) return;
+
+    setDestinationCities((previous) => {
+      if (previous.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
+        return previous;
+      }
+      return [...previous, normalized];
+    });
+  }
+
+  function commitDestinationInput() {
+    const parsed = parseCityTokens(destinationInput);
+    if (parsed.length === 0) {
+      setDestinationInput('');
+      return;
+    }
+
+    parsed.forEach(addDestinationCity);
+    setDestinationInput('');
+  }
+
+  function removeDestinationCity(indexToRemove: number) {
+    setDestinationCities((previous) => previous.filter((_, index) => index !== indexToRemove));
+  }
+
+  useEffect(() => {
+    if (!isLoaded || !destinationInputRef.current || autocompleteRef.current) return;
+
+    let listener: google.maps.MapsEventListener | null = null;
+
+    try {
+      const googleMaps = window.google;
+      if (!googleMaps?.maps?.places?.Autocomplete) {
+        throw new Error('Google Places library not available');
+      }
+
+      const autocomplete = new googleMaps.maps.places.Autocomplete(
+        destinationInputRef.current,
+        { types: ['(cities)'], fields: ['formatted_address'] },
+      );
+      autocompleteRef.current = autocomplete;
+
+      listener = autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace();
+        if (!place?.formatted_address) return;
+
+        addDestinationCity(place.formatted_address);
+        setDestinationInput('');
+        window.setTimeout(() => destinationInputRef.current?.focus(), 0);
+      });
+    } catch (error) {
+      console.error('[CreateTripModal] Places autocomplete init failed:', error);
+    }
+
+    return () => {
+      listener?.remove();
+    };
+  }, [isLoaded]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    const pendingInputCities = parseCityTokens(destinationInput);
+    const mergedCities = [...destinationCities];
+
+    for (const city of pendingInputCities) {
+      if (!mergedCities.some((existing) => existing.toLowerCase() === city.toLowerCase())) {
+        mergedCities.push(city);
+      }
+    }
+
+    const trimmedDestination = mergedCities.join('; ');
+
+    if (!trimmedDestination) {
+      setError('Please add at least one city.');
+      return;
+    }
+
     if (new Date(endDate) < new Date(startDate)) {
       setError('End date must be after start date.');
       return;
     }
+
     setLoading(true);
     const result = await createTrip({
-      name, destination, startDate, endDate,
+      name,
+      destination: trimmedDestination,
+      startDate,
+      endDate,
       ownerId: userId.uid,
       ownerDisplayName: userId.displayName ?? 'Traveler',
       ownerEmail: userId.email ?? '',
@@ -162,17 +325,68 @@ function CreateTripModal({ userId, onClose, onCreated }: {
   }
 
   return (
-    <Modal title="New trip" onClose={onClose}>
+    <Modal title="Create team" onClose={onClose}>
       {error && <p className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Trip name" id="tname"><input id="tname" required value={name} onChange={e=>setName(e.target.value)} className={inputCls} placeholder="Himachal Adventure"/></Field>
-        <Field label="Destination" id="dest"><input id="dest" required value={destination} onChange={e=>setDestination(e.target.value)} className={inputCls} placeholder="Manali, Himachal Pradesh"/></Field>
+        <Field label="Destination" id="dest">
+          <div
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-indigo-500 min-h-[42px] flex flex-wrap items-center gap-2 cursor-text"
+            onClick={() => destinationInputRef.current?.focus()}
+          >
+            {destinationCities.map((city, index) => (
+              <span
+                key={`${city}-${index}`}
+                className="inline-flex items-center gap-2 rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-1 text-xs"
+              >
+                {city}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeDestinationCity(index);
+                  }}
+                  className="rounded-full text-indigo-500 hover:text-indigo-700 focus:outline-none"
+                  aria-label={`Remove ${city}`}
+                >
+                  x
+                </button>
+              </span>
+            ))}
+
+            <input
+              id="dest"
+              ref={destinationInputRef}
+              value={destinationInput}
+              onChange={(event) => setDestinationInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ';' || event.key === 'Tab') {
+                  if (destinationInput.trim()) {
+                    event.preventDefault();
+                    commitDestinationInput();
+                  }
+                } else if (event.key === 'Backspace' && !destinationInput && destinationCities.length > 0) {
+                  removeDestinationCity(destinationCities.length - 1);
+                }
+              }}
+              className="flex-1 min-w-[12rem] border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
+              placeholder={destinationCities.length > 0 ? 'Add another city...' : 'Type and press Enter to add city'}
+              autoComplete="off"
+            />
+          </div>
+          {loadError && (
+            <p className="mt-2 text-xs text-yellow-700">Autocomplete is unavailable; please type a destination manually.</p>
+          )}
+          {!loadError && !isLoaded && (
+            <p className="mt-2 text-xs text-gray-500">Loading place suggestions…</p>
+          )}
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start date" id="sd"><input id="sd" type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)} className={inputCls}/></Field>
           <Field label="End date" id="ed"><input id="ed" type="date" required value={endDate} onChange={e=>setEndDate(e.target.value)} className={inputCls}/></Field>
         </div>
         <button type="submit" disabled={loading} className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
-          {loading ? 'Creating…' : 'Create trip'}
+          {loading ? 'Creating…' : 'Create team'}
         </button>
       </form>
     </Modal>

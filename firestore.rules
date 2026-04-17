@@ -58,18 +58,35 @@ service cloud.firestore {
 
     match /trips/{tripId} {
 
-      // Any member can read the trip document
-      allow read: if isTripMember(tripId);
+      // MVP mode: allow authenticated users to read trips so invite-code lookup
+      // and cross-user collaboration work reliably during development.
+      // TODO: tighten this after implementing a hardened invite resolver.
+      allow read: if isAuthed();
 
       // Any authenticated user can create a trip (validated above)
       allow create: if isAuthed() && isValidTrip();
 
-      // Only the owner can update trip metadata (name, destination, dates)
-      // Members joining is handled via the members sub-collection + memberIds array
-      allow update: if isTripOwner(tripId)
-                    // Owner cannot transfer ownership or change inviteCode arbitrarily
-                    && request.resource.data.ownerId == resource.data.ownerId
-                    && request.resource.data.inviteCode == resource.data.inviteCode;
+      // Owner can update trip metadata; joining users can only append themselves
+      // to memberIds (used by join-by-invite transaction).
+      allow update: if (
+                      // Owner metadata updates
+                      (
+                        isAuthed()
+                        && request.auth.uid == resource.data.ownerId
+                        && request.resource.data.ownerId == resource.data.ownerId
+                        && request.resource.data.inviteCode == resource.data.inviteCode
+                      )
+                      ||
+                      // Self-join update: only memberIds can change, and only by +1 with self
+                      (
+                        isAuthed()
+                        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['memberIds'])
+                        && !(request.auth.uid in resource.data.memberIds)
+                        && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+                        && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+                        && request.auth.uid in request.resource.data.memberIds
+                      )
+                    );
 
       // Trips cannot be deleted via client (archive via soft-delete in week 2)
       allow delete: if false;
@@ -81,15 +98,20 @@ service cloud.firestore {
         // Any trip member can read the member list
         allow read: if isTripMember(tripId);
 
-        // A user can create their own member document (joining the trip)
-        // The trip-level memberIds array update is validated server-side via transaction
+        // A user can create their own member doc when joining with role=member.
+        // The owner doc can be created in the same atomic write as trip creation
+        // by checking the post-write parent trip document via getAfter().
         allow create: if isAuthed()
                       && request.auth.uid == userId
-                      && request.resource.data.role == 'member'  // cannot self-assign owner
-                      && request.resource.data.userId == userId;
-
-        // Owner can create member docs (used when creating the trip — owner member doc)
-        allow create: if isTripOwner(tripId);
+                      && request.resource.data.userId == userId
+                      && (
+                        request.resource.data.role == 'member'
+                        || (
+                          request.resource.data.role == 'owner'
+                          && existsAfter(/databases/$(database)/documents/trips/$(tripId))
+                          && getAfter(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid
+                        )
+                      );
 
         // Members cannot update role — only owner can promote (week 2 feature)
         allow update: if isTripOwner(tripId);
@@ -97,6 +119,20 @@ service cloud.firestore {
         // Owner can remove members; a member can remove themselves
         allow delete: if isTripOwner(tripId) || isUser(userId);
       }
+    }
+
+    // ─── /tripInvites/{code} ─────────────────────────────────────────────────
+    // Lightweight code -> tripId mapping used for join-by-code without exposing
+    // full trip reads to non-members.
+
+    match /tripInvites/{code} {
+      allow get: if isAuthed();
+      allow list: if false;
+
+      allow create: if isAuthed();
+
+      allow update: if false;
+      allow delete: if false;
     }
   }
 }

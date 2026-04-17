@@ -1,6 +1,7 @@
 {
   "projects": {
-    "default": "wanderboard-50a5d"
+    "default": "wanderboard-50a5d",
+    "chalja": "wanderboard-50a5d"
   },
   "targets": {},
   "etags": {}

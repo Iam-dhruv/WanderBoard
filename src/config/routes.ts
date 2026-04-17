@@ -7,6 +7,16 @@ export const ROUTES = {
   REGISTER:   '/register',
   DASHBOARD:  '/dashboard',
   TRIP:       '/trip/:tripId',
+  TRIP_PLANNING:     '/trip/:tripId/planning',
+  TRIP_BUCKET_LIST:  '/trip/:tripId/bucket-list',
+  TRIP_DISCOVERY:    '/trip/:tripId/discovery',
+  TRIP_EXPENSES:     '/trip/:tripId/expenses',
+  TRIP_CONTINGENCY:  '/trip/:tripId/contingency',
   // Helper to build a concrete trip URL — avoids manual string interpolation
   trip: (tripId: string) => `/trip/${tripId}`,
+  tripPlanning: (tripId: string) => `/trip/${tripId}/planning`,
+  tripBucketList: (tripId: string) => `/trip/${tripId}/bucket-list`,
+  tripDiscovery: (tripId: string) => `/trip/${tripId}/discovery`,
+  tripExpenses: (tripId: string) => `/trip/${tripId}/expenses`,
+  tripContingency: (tripId: string) => `/trip/${tripId}/contingency`,
 } as const;
