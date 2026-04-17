@@ -259,6 +259,8 @@ export function TripDiscoveryPage() {
                 places={places}
                 isLoading={loading}
                 hasSearched={hasSearched}
+                tripStartDate={activeTrip.startDate}
+                tripEndDate={activeTrip.endDate}
               />
             </div>
           </div>

@@ -1,6 +1,9 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { addToBucket } from '@/features/discovery/services/bucketService';
 import type { Place } from '@/features/discovery/types';
+import { useAuth } from '@/features/auth/AuthProvider';
+import { err, type BucketListUserData } from '@/types';
+import { AddToBucketModal } from '@/features/discovery/components/AddToBucketModal';
 
 const FALLBACK_CARD_IMAGE = 'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=800&q=80';
 
@@ -9,12 +12,28 @@ interface DiscoveryCardProps {
   place: Place;
   onAdded?: (place: Place) => void;
   isAlreadyAdded?: boolean;
+  tripStartDate?: string;
+  tripEndDate?: string;
 }
 
-function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false }: DiscoveryCardProps) {
+function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false, tripStartDate, tripEndDate }: DiscoveryCardProps) {
+  const { user } = useAuth();
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(isAlreadyAdded);
+  const [error, setError] = useState<string | null>(null);
   const [hasImageError, setHasImageError] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const addedBy = useMemo(() => {
+    const displayName = user?.displayName ?? user?.email ?? 'Traveler';
+    return user
+      ? {
+          userId: user.uid,
+          displayName,
+          photoURL: user.photoURL ?? null,
+        }
+      : null;
+  }, [user]);
 
   useEffect(() => {
     if (isAlreadyAdded) {
@@ -22,22 +41,45 @@ function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false }: D
     }
   }, [isAlreadyAdded]);
 
-  const handleAdd = async () => {
+  const handleAdd = async (userData: BucketListUserData) => {
+    if (isAdded || isAdding) {
+      return err('Item already added.');
+    }
+
+    if (!addedBy) {
+      const message = 'Please sign in to add places.';
+      setError(message);
+      return err(message);
+    }
+
+    setIsAdding(true);
+    setError(null);
+
+    const result = await addToBucket(tripId, place, addedBy, userData);
+    if (result.ok) {
+      setIsAdded(true);
+      onAdded?.(place);
+    } else {
+      setIsAdded(result.error.includes('already') ? true : false);
+      setError(result.error);
+    }
+
+    setIsAdding(false);
+    return result;
+  };
+
+  const handleOpen = () => {
     if (isAdded || isAdding) {
       return;
     }
 
-    setIsAdding(true);
-
-    try {
-      await addToBucket(tripId, place);
-      setIsAdded(true);
-      onAdded?.(place);
-    } catch {
-      setIsAdded(false);
-    } finally {
-      setIsAdding(false);
+    if (!addedBy) {
+      setError('Please sign in to add places.');
+      return;
     }
+
+    setError(null);
+    setIsModalOpen(true);
   };
 
   return (
@@ -60,14 +102,25 @@ function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false }: D
           </span>
           <button
             type="button"
-            onClick={handleAdd}
+            onClick={handleOpen}
             disabled={isAdding || isAdded}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {isAdded ? 'Added' : isAdding ? 'Adding...' : 'Add'}
           </button>
         </div>
+        {error && (
+          <p className="text-xs text-rose-600">{error}</p>
+        )}
       </div>
+      <AddToBucketModal
+        isOpen={isModalOpen}
+        place={place}
+        minDate={tripStartDate}
+        maxDate={tripEndDate}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleAdd}
+      />
     </article>
   );
 }

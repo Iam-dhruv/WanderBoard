@@ -6,6 +6,7 @@ import { RegisterPage } from '@/features/auth/RegisterPage';
 import { DashboardPage } from '@/features/trips/DashboardPage';
 import { TripWorkspacePage } from '@/features/trips/TripWorkspacePage';
 import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
+import { TripBucketListPage } from '@/features/trips/TripBucketListPage';
 import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
 import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
 import { ROUTES } from '@/config/routes';
@@ -26,15 +27,7 @@ export default function App() {
             <Route path={ROUTES.TRIP} element={<TripWorkspacePage />}>
               <Route index element={<Navigate to="planning" replace />} />
               <Route path="planning" element={<TripPlanningPage />} />
-              <Route
-                path="bucket-list"
-                element={(
-                  <TripFeaturePlaceholderPage
-                    title="Bucket list"
-                    description="Shared activity suggestions and voting will live here once the bucket list owner finishes the feature."
-                  />
-                )}
-              />
+              <Route path="bucket-list" element={<TripBucketListPage />} />
               <Route path="discovery" element={<TripDiscoveryPage />} />
               <Route
                 path="expenses"

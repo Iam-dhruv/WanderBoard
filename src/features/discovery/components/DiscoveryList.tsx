@@ -6,9 +6,11 @@ interface DiscoveryListProps {
   places: Place[];
   isLoading: boolean;
   hasSearched: boolean;
+  tripStartDate?: string;
+  tripEndDate?: string;
 }
 
-export function DiscoveryList({ tripId, places, isLoading, hasSearched }: DiscoveryListProps) {
+export function DiscoveryList({ tripId, places, isLoading, hasSearched, tripStartDate, tripEndDate }: DiscoveryListProps) {
   if (isLoading) {
     return (
       <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center text-sm text-gray-500 shadow-sm">
@@ -36,6 +38,8 @@ export function DiscoveryList({ tripId, places, isLoading, hasSearched }: Discov
           key={place.placeId}
           tripId={tripId}
           place={place}
+          tripStartDate={tripStartDate}
+          tripEndDate={tripEndDate}
         />
       ))}
     </div>

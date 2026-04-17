@@ -42,6 +42,98 @@ service cloud.firestore {
           && d.memberIds[0] == request.auth.uid;
     }
 
+    function isValidBucketItem() {
+      let d = request.resource.data;
+      return d.keys().hasAll([
+        'placeId', 'name', 'address', 'photoUrl', 'rating',
+        'addedById', 'addedByName', 'addedByPhotoUrl',
+        'createdAt', 'order', 'upvotes', 'downvotes', 'score', 'votesByUser'
+      ])
+      && d.placeId is string && d.placeId.size() > 0
+      && d.name is string && d.name.size() > 0
+      && d.address is string
+      && d.photoUrl is string
+      && d.rating is number
+      && d.addedById == request.auth.uid
+      && d.addedByName is string
+      && (d.addedByPhotoUrl is string || d.addedByPhotoUrl == null)
+      && d.createdAt is timestamp
+      && d.order is number
+      && d.upvotes == 0
+      && d.downvotes == 0
+      && d.score == 0
+      && d.votesByUser is map
+      && d.votesByUser.size() == 0
+      && isValidBucketLocation(d)
+      && isValidBucketUserData(d)
+      && isValidBucketWeather(d);
+    }
+
+    function isValidBucketLocation(d) {
+      return !d.keys().hasAny(['location'])
+        || (d.location is map
+          && d.location.keys().hasAll(['lat', 'lng'])
+          && d.location.lat is number
+          && d.location.lng is number);
+    }
+
+    function isValidBucketUserData(d) {
+      return !d.keys().hasAny(['userData'])
+        || (d.userData is map
+          && (!d.userData.keys().hasAny(['customTitle']) || d.userData.customTitle is string)
+          && (!d.userData.keys().hasAny(['notes']) || d.userData.notes is string)
+          && (!d.userData.keys().hasAny(['proposedTime']) || d.userData.proposedTime is string)
+          && (!d.userData.keys().hasAny(['activityType']) || d.userData.activityType is string)
+          && (!d.userData.keys().hasAny(['priority']) || d.userData.priority is string)
+          && (!d.userData.keys().hasAny(['tags']) || d.userData.tags is list)
+          && (!d.userData.keys().hasAny(['durationMinutes']) || d.userData.durationMinutes is number));
+    }
+
+    function isValidBucketWeather(d) {
+      return !d.keys().hasAny(['weather'])
+        || (d.weather is map
+          && d.weather.keys().hasAll([
+            'temperature', 'condition', 'conditionCode',
+            'sunrise', 'sunset', 'isGoldenHour', 'isContingency', 'updatedAt'
+          ])
+          && d.weather.temperature is number
+          && d.weather.condition is string
+          && d.weather.conditionCode is number
+          && d.weather.sunrise is number
+          && d.weather.sunset is number
+          && d.weather.isGoldenHour is bool
+          && d.weather.isContingency is bool
+          && d.weather.updatedAt is number);
+    }
+
+    function isValidVoteUpdate() {
+      let d = request.resource.data;
+      return request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['upvotes', 'downvotes', 'score', 'votesByUser'])
+        && d.upvotes is number
+        && d.downvotes is number
+        && d.score == d.upvotes - d.downvotes;
+    }
+
+    function isValidOrderUpdate() {
+      return request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['order'])
+        && request.resource.data.order is number;
+    }
+
+    function isValidWeatherUpdate() {
+      return request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['weather'])
+        && isValidBucketWeather(request.resource.data);
+    }
+
+    function isValidUserDataUpdate(tripId) {
+      return request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['userData'])
+        && (isTripOwner(tripId) || request.auth.uid == resource.data.addedById)
+        && isValidBucketUserData(request.resource.data);
+    }
+
     // ─── /users/{uid} ─────────────────────────────────────────────────────────
     // Users can only read/write their own profile document.
 
@@ -118,6 +210,39 @@ service cloud.firestore {
 
         // Owner can remove members; a member can remove themselves
         allow delete: if isTripOwner(tripId) || isUser(userId);
+      }
+
+      // ─── /trips/{tripId}/bucketList/{itemId} ──────────────────────────────
+
+      match /bucketList/{itemId} {
+        allow read: if isTripMember(tripId);
+
+        allow create: if isTripMember(tripId)
+                      && isValidBucketItem();
+
+        allow update: if isTripMember(tripId)
+                      && (isValidVoteUpdate()
+                        || isValidOrderUpdate()
+                        || isValidWeatherUpdate()
+                        || isValidUserDataUpdate(tripId));
+
+        allow delete: if isTripOwner(tripId) || request.auth.uid == resource.data.addedById;
+
+        match /comments/{commentId} {
+          allow read: if isTripMember(tripId);
+
+          allow create: if isTripMember(tripId)
+                        && request.resource.data.userId == request.auth.uid
+                        && request.resource.data.userName is string
+                        && (request.resource.data.userPhotoUrl is string || request.resource.data.userPhotoUrl == null)
+                        && request.resource.data.message is string
+                        && request.resource.data.message.size() > 0
+                        && request.resource.data.message.size() <= 500
+                        && request.resource.data.createdAt is timestamp;
+
+          allow update: if false;
+          allow delete: if isTripOwner(tripId) || request.auth.uid == resource.data.userId;
+        }
       }
     }
 
