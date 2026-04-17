@@ -96,6 +96,25 @@ export interface BucketListComment {
   createdAt: number;
 }
 
+export type TimelineSourceType = 'bucket' | 'custom';
+
+export interface TimelineEvent {
+  id: string;
+  tripId: string;
+  title: string;
+  description: string;
+  location: string;
+  date: string;              // "YYYY-MM-DD" — within trip.startDate..endDate
+  startTime: string;         // "HH:MM" 24-hour
+  durationMinutes: number;
+  color: string;             // hex, auto-assigned
+  tags: string[];            // e.g. ['outdoor', 'photography']
+  sourceType: 'bucket' | 'custom';
+  bucketItemId: string | null; // set when sourced from bucket list
+  createdBy: string;           // uid of creator (always the owner)
+  createdAt: number;           // Unix ms
+}
+
 // ─── Result wrapper ────────────────────────────────────────────────────────────
 // All service functions return Result<T> — never throw to the UI layer.
 // Use isOk() / isErr() helpers to narrow before accessing .data / .error.

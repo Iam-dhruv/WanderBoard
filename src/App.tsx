@@ -9,6 +9,7 @@ import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
 import { TripBucketListPage } from '@/features/trips/TripBucketListPage';
 import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
 import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
+import { TimelinePage } from '@/features/timeline/TimelinePage';
 import { ROUTES } from '@/config/routes';
 
 export default function App() {
@@ -29,6 +30,8 @@ export default function App() {
               <Route path="planning" element={<TripPlanningPage />} />
               <Route path="bucket-list" element={<TripBucketListPage />} />
               <Route path="discovery" element={<TripDiscoveryPage />} />
+              {/* ── Timeline — new feature ── */}
+              <Route path="timeline"  element={<TimelinePage />} />
               <Route
                 path="expenses"
                 element={(
