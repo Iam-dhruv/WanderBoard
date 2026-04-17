@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { generateInviteCode, isValidInviteCode, normalizeInviteCode } from '@/lib/generateInviteCode';
+import { normalizeTripCurrency } from '@/lib/currency';
 import { ok, err, type Result, type Trip, type TripMember } from '@/types';
 
 // ─── Firestore collection helpers ─────────────────────────────────────────────
@@ -25,12 +26,28 @@ const inviteDoc    = (code: string) => doc(db, 'tripInvites', code);
 export interface CreateTripInput {
   name: string;
   destination: string;
+  currency: string;
   startDate: string;
   endDate: string;
   ownerId: string;
   ownerDisplayName: string;
   ownerEmail: string;
   ownerPhotoURL: string | null;
+}
+
+function toTrip(id: string, data: Record<string, unknown>): Trip {
+  return {
+    id,
+    name: String(data.name ?? ''),
+    destination: String(data.destination ?? ''),
+    currency: normalizeTripCurrency(typeof data.currency === 'string' ? data.currency : undefined),
+    startDate: String(data.startDate ?? ''),
+    endDate: String(data.endDate ?? ''),
+    inviteCode: String(data.inviteCode ?? ''),
+    ownerId: String(data.ownerId ?? ''),
+    memberIds: Array.isArray(data.memberIds) ? data.memberIds.map((value) => String(value)) : [],
+    createdAt: Number(data.createdAt ?? Date.now()),
+  };
 }
 
 export async function createTrip(input: CreateTripInput): Promise<Result<Trip>> {
@@ -42,6 +59,7 @@ export async function createTrip(input: CreateTripInput): Promise<Result<Trip>> 
       const trip: Omit<Trip, 'id'> = {
         name:        input.name.trim(),
         destination: input.destination.trim(),
+        currency:    normalizeTripCurrency(input.currency),
         startDate:   input.startDate,
         endDate:     input.endDate,
         inviteCode,
@@ -154,7 +172,7 @@ export async function joinTrip(input: JoinTripInput): Promise<Result<Trip>> {
         throw new Error('TRIP_NOT_FOUND');
       }
 
-      const trip = { id: tripSnap.id, ...tripSnap.data() } as Trip;
+      const trip = toTrip(tripSnap.id, tripSnap.data());
 
       if (trip.memberIds.includes(input.userId)) {
         throw new Error('ALREADY_MEMBER');
@@ -186,7 +204,7 @@ export async function getUserTrips(userId: string): Promise<Result<Trip[]>> {
   try {
     const q = query(tripsCol(), where('memberIds', 'array-contains', userId));
     const snap = await getDocs(q);
-    const trips = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Trip));
+    const trips = snap.docs.map((d) => toTrip(d.id, d.data()));
     return ok(trips);
   } catch (e: any) {
     console.error('[getUserTrips]', e);
@@ -216,7 +234,7 @@ export async function getTrip(tripId: string): Promise<Result<Trip>> {
   try {
     const snap = await getDoc(tripDoc(tripId));
     if (!snap.exists()) return err('Trip not found.');
-    return ok({ id: snap.id, ...snap.data() } as Trip);
+    return ok(toTrip(snap.id, snap.data()));
   } catch (e: any) {
     console.error('[getTrip]', e);
     return err('Failed to load trip.');

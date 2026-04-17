@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import type { TripMember } from '@/types';
-import type { Expense, ExpenseInput, SettlementResult } from '@/features/expenses/types';
+import type { Expense, ExpenseInput, Settlement, SettlementResult } from '@/features/expenses/types';
 import {
+  createSettlementPayment,
   createExpense,
   getExpenses,
   listenToExpenses,
   removeExpense,
+  settleOutstandingExpenses,
   updateExpense,
 } from '@/features/expenses/services/expenseService';
 import { calculateSettlements } from '@/features/expenses/services/settlementEngine';
@@ -23,6 +25,8 @@ interface ExpenseState {
   addExpense: (tripId: string, input: ExpenseInput, members: TripMember[]) => Promise<boolean>;
   editExpense: (tripId: string, expenseId: string, updates: Partial<ExpenseInput>, members: TripMember[]) => Promise<boolean>;
   deleteExpense: (tripId: string, expenseId: string, members: TripMember[]) => Promise<boolean>;
+  settleExpenses: (tripId: string, members: TripMember[]) => Promise<boolean>;
+  settleOneSuggestion: (tripId: string, settlement: Settlement, members: TripMember[]) => Promise<boolean>;
   recalculate: (members: TripMember[]) => void;
   reset: () => void;
 }
@@ -39,9 +43,10 @@ function emptyBalances(members: TripMember[]): Record<string, number> {
 }
 
 function calculateBalances(expenses: Expense[], members: TripMember[]): SettlementResult {
+  const unsettledExpenses = expenses.filter((expense) => !expense.settled);
   const balances = emptyBalances(members);
 
-  expenses.forEach((expense) => {
+  unsettledExpenses.forEach((expense) => {
     if (typeof balances[expense.paidBy] !== 'number') {
       balances[expense.paidBy] = 0;
     }
@@ -123,7 +128,14 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       return false;
     }
 
-    const nextExpenses = [result.data, ...get().expenses];
+    // When realtime listener is active, it is the source of truth for list updates.
+    // Applying local mutation here can duplicate entries with pending snapshot updates.
+    if (get().unsubscribe) {
+      set({ error: null });
+      return true;
+    }
+
+    const nextExpenses = [result.data, ...get().expenses.filter((expense) => expense.id !== result.data.id)];
     const ledger = calculateBalances(nextExpenses, members);
     set({ expenses: nextExpenses, balances: ledger.balances, settlements: ledger.settlements, error: null });
     return true;
@@ -134,6 +146,11 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     if (!result.ok) {
       set({ error: result.error });
       return false;
+    }
+
+    if (get().unsubscribe) {
+      set({ error: null });
+      return true;
     }
 
     const nextExpenses = get().expenses.map((expense) =>
@@ -151,7 +168,64 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       return false;
     }
 
+    if (get().unsubscribe) {
+      set({ error: null });
+      return true;
+    }
+
     const nextExpenses = get().expenses.filter((expense) => expense.id !== expenseId);
+    const ledger = calculateBalances(nextExpenses, members);
+    set({ expenses: nextExpenses, balances: ledger.balances, settlements: ledger.settlements, error: null });
+    return true;
+  },
+
+  settleExpenses: async (tripId, members) => {
+    const result = await settleOutstandingExpenses(tripId);
+    if (!result.ok) {
+      set({ error: result.error });
+      return false;
+    }
+
+    if (get().unsubscribe) {
+      set({ error: null });
+      return true;
+    }
+
+    const now = Date.now();
+    const nextExpenses = get().expenses.map((expense) =>
+      expense.settled
+        ? expense
+        : {
+            ...expense,
+            settled: true,
+            updatedAt: now,
+          },
+    );
+
+    const ledger = calculateBalances(nextExpenses, members);
+    set({ expenses: nextExpenses, balances: ledger.balances, settlements: ledger.settlements, error: null });
+    return true;
+  },
+
+  settleOneSuggestion: async (tripId, settlement, members) => {
+    const result = await createSettlementPayment(tripId, {
+      fromUser: settlement.fromUser,
+      toUser: settlement.toUser,
+      amount: settlement.amount,
+      date: Date.now(),
+    });
+
+    if (!result.ok) {
+      set({ error: result.error });
+      return false;
+    }
+
+    if (get().unsubscribe) {
+      set({ error: null });
+      return true;
+    }
+
+    const nextExpenses = [result.data, ...get().expenses.filter((expense) => expense.id !== result.data.id)];
     const ledger = calculateBalances(nextExpenses, members);
     set({ expenses: nextExpenses, balances: ledger.balances, settlements: ledger.settlements, error: null });
     return true;

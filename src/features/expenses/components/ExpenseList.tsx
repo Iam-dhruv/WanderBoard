@@ -31,7 +31,17 @@ export function ExpenseList({ expenses, members, onDelete }: ExpenseListProps) {
                   <p className="text-xs text-gray-500">
                     {expense.category} / {expense.subcategory} | Paid by {nameById(expense.paidBy, members)}
                   </p>
+                  {expense.entryType === 'settlement' && (
+                    <p className="mt-1 inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                      Settlement payment
+                    </p>
+                  )}
                   <p className="mt-1 text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()}</p>
+                  {expense.settled && (
+                    <p className="mt-1 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                      Settled
+                    </p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-gray-900">{expense.amount.toFixed(2)}</p>
