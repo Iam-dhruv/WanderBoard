@@ -7,6 +7,22 @@
         { "fieldPath": "memberIds",  "arrayConfig": "CONTAINS" },
         { "fieldPath": "createdAt",  "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "bucketList",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "score", "order": "DESCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bucketList",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "order", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

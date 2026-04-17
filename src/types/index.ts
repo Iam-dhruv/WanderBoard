@@ -32,6 +32,70 @@ export interface AppUser {
   photoURL: string | null;
 }
 
+// ─── Bucket list types ───────────────────────────────────────────────────────
+
+export type VoteValue = -1 | 0 | 1;
+
+export interface BucketListLocation {
+  lat: number;
+  lng: number;
+}
+
+export interface BucketListWeather {
+  temperature: number;
+  condition: string;
+  conditionCode: number;
+  sunrise: number;
+  sunset: number;
+  isGoldenHour: boolean;
+  isContingency: boolean;
+  updatedAt: number;
+}
+
+export type BucketListPriority = 'low' | 'medium' | 'high';
+
+export interface BucketListUserData {
+  customTitle?: string;
+  notes?: string;
+  proposedTime?: string;
+  activityType?: string;
+  priority?: BucketListPriority;
+  tags?: string[];
+  durationMinutes?: number;
+}
+
+export interface BucketListItem {
+  id: string;
+  tripId: string;
+  placeId: string;
+  name: string;
+  rating: number;
+  address: string;
+  photoUrl: string;
+  location?: BucketListLocation;
+  addedById: string;
+  addedByName: string;
+  addedByPhotoUrl: string | null;
+  createdAt: number;
+  order: number;
+  weather?: BucketListWeather;
+  userData?: BucketListUserData;
+  upvotes: number;
+  downvotes: number;
+  score: number;
+  votesByUser: Record<string, VoteValue>;
+}
+
+export interface BucketListComment {
+  id: string;
+  itemId: string;
+  userId: string;
+  userName: string;
+  userPhotoUrl: string | null;
+  message: string;
+  createdAt: number;
+}
+
 // ─── Result wrapper ────────────────────────────────────────────────────────────
 // All service functions return Result<T> — never throw to the UI layer.
 // Use isOk() / isErr() helpers to narrow before accessing .data / .error.
