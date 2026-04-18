@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
@@ -9,15 +9,30 @@ import { WeatherDashboard } from '@/features/weather';
 import { useWeatherStore } from '@/features/weather';
 import { getCoordinatesFromCity, type Coordinates } from '@/features/weather/geocodingService';
 
-// ─── Geocoding state shape ────────────────────────────────────────────────────
+// ─── Geocoding state shape ─────────────────────────────────────────────────────
 
-type GeoState =
+export type GeoState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; coords: Coordinates };
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Context — lets child routes (Timeline, etc.) read resolved coords ─────────
+// This avoids re-geocoding the same destination inside every child page.
+
+interface TripGeoContextValue {
+  geo: GeoState;
+}
+
+const TripGeoContext = createContext<TripGeoContextValue>({ geo: { status: 'idle' } });
+
+/** Call inside any child route rendered by TripWorkspacePage to get the
+ *  already-resolved destination coordinates without re-geocoding. */
+export function useTripGeo(): TripGeoContextValue {
+  return useContext(TripGeoContext);
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
 
 export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
@@ -51,35 +66,37 @@ export function TripWorkspacePage() {
     );
 
     return () => {
-      {
       cancelled = true;
       setActiveTrip(null);
       resetWeather();
     };
-    };
-  }, [tripId, navigate, setActiveTrip, setMembers]);
+  }, [tripId, navigate, setActiveTrip, setMembers, resetWeather]);
 
-// ── Geocode destination whenever it changes ──────────────────────────────────
-useEffect(() => {
-  if (!activeTrip?.destination) return;
+  // ── Geocode destination whenever it changes ──────────────────────────────────
+  useEffect(() => {
+    if (!activeTrip?.destination) return;
 
-  setGeo({ status: 'loading' });
+    setGeo({ status: 'loading' });
 
-  getCoordinatesFromCity(activeTrip.destination).then((result) => {
-    if (result.ok) {
-      setGeo({ status: 'ready', coords: result.data });
-    } else {
-      setGeo({ status: 'error', message: result.error });
+    function extractPrimaryCity(destination: string) {
+      return destination.split(';')[0].trim();
     }
-  });
-}, [activeTrip?.destination]);
 
-const isOwner = activeTrip?.ownerId === user?.uid;
+    getCoordinatesFromCity(extractPrimaryCity(activeTrip.destination)).then((result) => {
+      if (result.ok) {
+        setGeo({ status: 'ready', coords: result.data });
+      } else {
+        setGeo({ status: 'error', message: result.error });
+      }
+    });
+  }, [activeTrip?.destination]);
 
-// Full-screen for discovery + timeline
-const isFullScreen =
-  loc.pathname.includes('/discovery') ||
-  loc.pathname.includes('/timeline');
+  const isOwner = activeTrip?.ownerId === user?.uid;
+
+  // Full-screen layout for discovery + timeline (no sidebar)
+  const isFullScreen =
+    loc.pathname.includes('/discovery') ||
+    loc.pathname.includes('/timeline');
 
   if (!activeTrip) {
     return (
@@ -90,90 +107,102 @@ const isFullScreen =
   }
 
   return (
-    <div
-      className={
-        isFullScreen
-          ? 'h-screen overflow-hidden bg-gray-50 flex flex-col'
-          : 'min-h-screen bg-gray-50'
-      }
-    >
-      {/* Top header */}
-      <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4 flex-shrink-0">
-        <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">
-          Back to Trips
-        </Link>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-base font-semibold text-gray-900 truncate">{activeTrip.name}</h1>
-          <p className="text-xs text-gray-400 truncate">
-            {activeTrip.destination} | {activeTrip.startDate} to {activeTrip.endDate}
-          </p>
-        </div>
-        {isOwner && (
-          <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full">
-            Trip owner
+    <TripGeoContext.Provider value={{ geo }}>
+      <div
+        className={
+          isFullScreen
+            ? 'h-screen overflow-hidden bg-gray-50 flex flex-col'
+            : 'min-h-screen bg-gray-50'
+        }
+      >
+        {/* ── Top header ──────────────────────────────────────────────────────── */}
+        <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4 flex-shrink-0">
+          <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">
+            Back to Trips
+          </Link>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base font-semibold text-gray-900 truncate">{activeTrip.name}</h1>
+            <p className="text-xs text-gray-400 truncate">
+              {activeTrip.destination} | {activeTrip.startDate} to {activeTrip.endDate}
+            </p>
           </div>
-        )}
-      </header>
-
-      {/* Tab bar */}
-      <div className="bg-white border-b border-gray-100 flex-shrink-0">
-        <nav className="max-w-6xl mx-auto px-6 flex items-center gap-2 overflow-x-auto py-3">
-          <TabLink to="planning"    label="Planning" />
-          <TabLink to="bucket-list" label="Bucket list" />
-          <TabLink to="discovery"   label="Discovery" />
-          <TabLink to="timeline"    label="Timeline" />
-          <TabLink to="expenses"    label="Expenses" />
-          <TabLink to="contingency" label="Contingency" />
-        </nav>
-      </div>
-
-      {/* Content */}
-      {isFullScreen ? (
-        <main className="flex-1 min-h-0">
-          <Outlet />
-        </main>
-      ) : (
-        <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          <section className="lg:col-span-2 min-w-0 space-y-6">
-            <Outlet />
-          </section>
-
-          <aside>
-            <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
-                <span className="text-xs text-gray-400">{members.length}</span>
-              </div>
-
-              {isOwner && (
-                <div className="mb-4 bg-gray-50 rounded-lg px-3 py-2.5">
-                  <p className="text-xs text-gray-500 mb-1">Invite code</p>
-                  <p className="font-mono font-semibold text-gray-900 tracking-widest text-sm">
-                    {activeTrip.inviteCode}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-1">Share with group members</p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                {members.map((member) => (
-                  <MemberRow
-                    key={member.userId}
-                    member={member}
-                    isCurrentUser={member.userId === user?.uid}
-                  />
-                ))}
-              </div>
+          {isOwner && (
+            <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full">
+              Trip owner
             </div>
-          </aside>
-        </main>
-      )}
-    </div>
+          )}
+        </header>
+
+        {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
+        <div className="bg-white border-b border-gray-100 flex-shrink-0">
+          <nav className="max-w-6xl mx-auto px-6 flex items-center gap-2 overflow-x-auto py-3">
+            <TabLink to="planning"    label="Planning" />
+            <TabLink to="bucket-list" label="Bucket list" />
+            <TabLink to="discovery"   label="Discovery" />
+            <TabLink to="timeline"    label="Timeline" />
+            <TabLink to="expenses"    label="Expenses" />
+            <TabLink to="contingency" label="Contingency" />
+          </nav>
+        </div>
+
+        {/* ── Content ─────────────────────────────────────────────────────────── */}
+        {isFullScreen ? (
+          <main className="flex-1 min-h-0">
+            <Outlet />
+          </main>
+        ) : (
+          <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+            {/* Left: routed feature panel */}
+            <section className="lg:col-span-2 min-w-0 space-y-6">
+              <Outlet />
+            </section>
+
+            {/* Right: sticky sidebar — travelers + weather */}
+            <aside className="space-y-4">
+              {/* Travelers card */}
+              <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
+                  <span className="text-xs text-gray-400">{members.length}</span>
+                </div>
+
+                {isOwner && (
+                  <div className="mb-4 bg-gray-50 rounded-lg px-3 py-2.5">
+                    <p className="text-xs text-gray-500 mb-1">Invite code</p>
+                    <p className="font-mono font-semibold text-gray-900 tracking-widest text-sm">
+                      {activeTrip.inviteCode}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">Share with group members</p>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {members.map((member) => (
+                    <MemberRow
+                      key={member.userId}
+                      member={member}
+                      isCurrentUser={member.userId === user?.uid}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Weather panel — sits below travelers in the sidebar */}
+              <GeoWeatherPanel
+                geo={geo}
+                date={activeTrip.startDate}
+                destination={activeTrip.destination}
+              />
+            </aside>
+          </main>
+        )}
+      </div>
+    </TripGeoContext.Provider>
   );
 }
 
-// ─── Geo-aware weather panel ───────────────────────────────────────────────────
-// Handles all three geocoding states so TripWorkspacePage stays clean.
+// ─── GeoWeatherPanel ───────────────────────────────────────────────────────────
+// Sidebar weather widget. Handles all three geocoding states.
 
 function GeoWeatherPanel({
   geo,
@@ -186,12 +215,10 @@ function GeoWeatherPanel({
 }) {
   if (geo.status === 'idle' || geo.status === 'loading') {
     return (
-      <div className="rounded-xl border border-gray-100 bg-white px-5 py-5">
-        <div className="flex items-center gap-2 text-sm text-gray-400">
-          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
+      <div className="bg-white rounded-xl border border-gray-100 px-4 py-4">
+        <p className="text-xs font-medium text-gray-500 mb-2">🌍 Weather</p>
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <MiniSpinner />
           Locating {destination}…
         </div>
       </div>
@@ -200,8 +227,8 @@ function GeoWeatherPanel({
 
   if (geo.status === 'error') {
     return (
-      <div className="rounded-xl border border-gray-100 bg-white px-5 py-5">
-        <p className="text-sm font-medium text-gray-700 mb-1">🌍 Environmental Dashboard</p>
+      <div className="bg-white rounded-xl border border-gray-100 px-4 py-4">
+        <p className="text-xs font-medium text-gray-700 mb-1">🌍 Weather</p>
         <p className="text-xs text-red-500">{geo.message}</p>
       </div>
     );
@@ -217,6 +244,7 @@ function GeoWeatherPanel({
   );
 }
 
+// ─── Sub-components ────────────────────────────────────────────────────────────
 
 function TabLink({ to, label }: { to: string; label: string }) {
   return (
@@ -236,16 +264,10 @@ function TabLink({ to, label }: { to: string; label: string }) {
   );
 }
 
-function MemberRow({
-  member,
-  isCurrentUser,
-}: {
-  member: TripMember;
-  isCurrentUser: boolean;
-}) {
+function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUser: boolean }) {
   const initials = member.displayName
     .split(' ')
-    .map((name) => name[0])
+    .map((n) => n[0])
     .join('')
     .slice(0, 2)
     .toUpperCase();
@@ -261,15 +283,25 @@ function MemberRow({
           {isCurrentUser && <span className="text-gray-400 font-normal"> (you)</span>}
         </p>
       </div>
-      <span
-        className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
-          member.role === 'owner'
-            ? 'bg-indigo-50 text-indigo-600'
-            : 'bg-gray-100 text-gray-500'
-        }`}
-      >
+      <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
+        member.role === 'owner' ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-500'
+      }`}>
         {member.role}
       </span>
     </div>
+  );
+}
+
+function MiniSpinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5 text-gray-400 flex-shrink-0"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+    </svg>
   );
 }

@@ -23,12 +23,13 @@ import {
   deleteBucketItem,
   listenToBucketComments,
   listenToBucketList,
-  refreshBucketItemWeather,
   updateBucketItemOrder,
   type BucketListSortMode,
 } from '@/features/discovery/services/bucketService';
 import type { AppUser, BucketListComment, BucketListItem, VoteValue } from '@/types';
 import { useTripStore } from './useTripStore';
+// ── NEW: MiniWeatherCard from the canonical weather feature ──────────────────
+import { MiniWeatherCard } from '@/features/weather/MiniWeatherCard';
 
 const FALLBACK_CARD_IMAGE = 'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=800&q=80';
 
@@ -65,15 +66,8 @@ export function TripBucketListPage() {
     };
   }, [activeTrip, sortMode]);
 
-  useEffect(() => {
-    if (!activeTrip || items.length === 0) {
-      return;
-    }
-
-    items.forEach((item) => {
-      void refreshBucketItemWeather(activeTrip.id, item);
-    });
-  }, [activeTrip, items]);
+  // NOTE: refreshBucketItemWeather removed — MiniWeatherCard handles its own fetching
+  // from the canonical weather feature, so no duplicate API calls via the legacy service.
 
   if (!activeTrip) {
     return null;
@@ -173,6 +167,7 @@ export function TripBucketListPage() {
                   key={item.id}
                   item={item}
                   tripId={activeTrip.id}
+                  tripStartDate={activeTrip.startDate}
                   isOwner={isOwner}
                   currentUser={user}
                 />
@@ -187,6 +182,7 @@ export function TripBucketListPage() {
               key={item.id}
               item={item}
               tripId={activeTrip.id}
+              tripStartDate={activeTrip.startDate}
               isOwner={isOwner}
               currentUser={user}
             />
@@ -228,6 +224,7 @@ function calculateOrder(previous?: number, next?: number) {
 function SortableBucketCard(props: {
   item: BucketListItem;
   tripId: string;
+  tripStartDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
 }) {
@@ -256,6 +253,7 @@ function SortableBucketCard(props: {
 function BucketListCard({
   item,
   tripId,
+  tripStartDate,
   isOwner,
   currentUser,
   showDragHandle = false,
@@ -264,11 +262,12 @@ function BucketListCard({
 }: {
   item: BucketListItem;
   tripId: string;
+  tripStartDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
   showDragHandle?: boolean;
-  dragHandleProps?: Record<string, any>;
-  dragHandleAttributes?: Record<string, any>;
+  dragHandleProps?: Record<string, unknown>;
+  dragHandleAttributes?: Record<string, unknown>;
 }) {
   const [hasImageError, setHasImageError] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
@@ -356,11 +355,16 @@ function BucketListCard({
             </div>
           </div>
 
-          {item.weather && (
+          {/* ── Weather section ─────────────────────────────────────────────────
+              Priority:
+              1. If Firestore already has fresh weather data → render it (legacy path)
+              2. If the item has a location but no weather → render MiniWeatherCard
+                 which geocodes + fetches from src/features/weather/* only        */}
+          {item.weather ? (
             <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-semibold text-gray-900">
-                  {Math.round(item.weather.temperature)} deg C
+                  {Math.round(item.weather.temperature)} °C
                 </span>
                 <span className="flex items-center gap-1 text-xs text-gray-600">
                   <span className="h-2 w-2 rounded-full bg-sky-400" aria-hidden />
@@ -381,13 +385,13 @@ function BucketListCard({
                 Sunrise {formatTime(item.weather.sunrise)} · Sunset {formatTime(item.weather.sunset)}
               </div>
             </div>
-          )}
-
-          {!item.weather && item.location && (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
-              Weather update pending...
-            </div>
-          )}
+          ) : item.location ? (
+            /* ── MiniWeatherCard: geocodes place name → fetches weather ──────── */
+            <MiniWeatherCard
+              placeName={item.address}
+              tripDate={tripStartDate}
+            />
+          ) : null}
 
           {item.userData && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
@@ -594,39 +598,25 @@ function BucketItemComments({
   );
 }
 
+// ─── Formatting helpers ────────────────────────────────────────────────────────
+
 function formatDate(value: number) {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date(value));
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(value));
 }
 
 function formatTime(value: number) {
   if (!value) return 'N/A';
-  return new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value));
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
 }
 
 function formatDateTime(value: string) {
   const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return value;
-  }
+  if (Number.isNaN(parsed)) return value;
   return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   }).format(new Date(parsed));
 }
 
 function getInitials(name: string) {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  return name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 }

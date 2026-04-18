@@ -5,6 +5,7 @@
 //  - TimelineGrid (drop target + calendar view)
 //  - CreateEventModal (owner: custom events)
 //  - Toast notifications
+//  - DayWeatherSummary strip (one per day, reads coords from TripGeoContext)
 
 import { useEffect, useRef, useState } from 'react';
 import { useTripStore } from '@/features/trips/useTripStore';
@@ -15,6 +16,9 @@ import { TimelineGrid } from './components/TimelineGrid';
 import { BucketListSidebar } from './components/BucketListSidebar';
 import { CreateEventModal } from './components/CreateEventModal';
 import type { BucketItem } from './components/BucketListSidebar';
+// ── NEW: weather per day ─────────────────────────────────────────────────────
+import { DayWeatherSummary } from '@/features/weather/DayWeatherSummary';
+import { useTripGeo } from '@/features/trips/TripWorkspacePage';
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -26,11 +30,33 @@ interface Toast {
 
 let toastCounter = 0;
 
+// ─── Helper: generate all YYYY-MM-DD dates in [start, end] ────────────────────
+
+function getDatesInRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const current = new Date(startDate);
+  const end = new Date(endDate);
+
+  // Guard: invalid or reversed range
+  if (isNaN(current.getTime()) || isNaN(end.getTime()) || current > end) {
+    return [];
+  }
+
+  while (current <= end) {
+    dates.push(current.toISOString().slice(0, 10));
+    current.setDate(current.getDate() + 1);
+  }
+
+  return dates;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function TimelinePage() {
   const { activeTrip } = useTripStore();
   const { user }       = useAuth();
+  // Read geocoded coords that TripWorkspacePage already resolved — no extra API call
+  const { geo }        = useTripGeo();
 
   const [events, setEvents]       = useState<TimelineEvent[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -105,6 +131,12 @@ export function TimelinePage() {
 
   if (!activeTrip) return null;
 
+  // Derive day list for the weather strip
+  const tripDays = getDatesInRange(activeTrip.startDate, activeTrip.endDate);
+
+  // Only render weather strip when coordinates are resolved
+  const showWeatherStrip = geo.status === 'ready' && tripDays.length > 0;
+
   return (
     <div className="flex h-full min-h-0 bg-gray-50">
 
@@ -132,7 +164,6 @@ export function TimelinePage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Role badge */}
             {isOwner ? (
               <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">
                 Owner — can edit
@@ -143,7 +174,6 @@ export function TimelinePage() {
               </span>
             )}
 
-            {/* Add custom event */}
             {isOwner && (
               <button
                 onClick={() => openCreateModal(activeTrip.startDate, '09:00')}
@@ -155,7 +185,35 @@ export function TimelinePage() {
           </div>
         </div>
 
-        
+        {/* ── Per-day weather strip ───────────────────────────────────────── */}
+        {showWeatherStrip && geo.status === 'ready' && (
+          <div className="flex-shrink-0 bg-white border-b border-gray-100 px-6 py-2 overflow-x-auto">
+            <div className="flex items-center gap-2 min-w-max">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-400 mr-1 flex-shrink-0">
+                Weather
+              </span>
+              {tripDays.map((date) => (
+                <div key={date} className="flex flex-col items-center gap-1 flex-shrink-0">
+                  <span className="text-[10px] text-gray-400 font-medium">
+                    {formatDayLabel(date)}
+                  </span>
+                  <DayWeatherSummary
+                    date={date}
+                    lat={geo.coords.lat}
+                    lon={geo.coords.lon}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Geocoding loading/error state for the strip */}
+        {geo.status === 'loading' && (
+          <div className="flex-shrink-0 bg-white border-b border-gray-100 px-6 py-2">
+            <p className="text-[10px] text-gray-400">Fetching destination weather…</p>
+          </div>
+        )}
 
         {/* Error state */}
         {loadError && (
@@ -209,4 +267,12 @@ export function TimelinePage() {
       </div>
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Format "2025-08-14" → "Aug 14" */
+function formatDayLabel(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00'); // force local midnight interpretation
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
