@@ -14,9 +14,16 @@ interface DiscoveryCardProps {
   isAlreadyAdded?: boolean;
   tripStartDate?: string;
   tripEndDate?: string;
+  isSelected?: boolean;
+  isHovered?: boolean;
+  onHoverChange?: (hovered: boolean) => void;
+  onCardClick?: () => void;
 }
 
-function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false, tripStartDate, tripEndDate }: DiscoveryCardProps) {
+function DiscoveryCardBase({
+  tripId, place, onAdded, isAlreadyAdded = false, tripStartDate, tripEndDate,
+  isSelected, isHovered, onHoverChange, onCardClick,
+}: DiscoveryCardProps) {
   const { user } = useAuth();
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(isAlreadyAdded);
@@ -82,8 +89,17 @@ function DiscoveryCardBase({ tripId, place, onAdded, isAlreadyAdded = false, tri
     setIsModalOpen(true);
   };
 
+  const active = isSelected || isHovered;
+
   return (
-    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <article
+      id={`place-card-${place.placeId}`}
+      className="overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow duration-150 cursor-pointer"
+      style={{ borderColor: isSelected ? 'var(--wb-ocean)' : isHovered ? 'var(--wb-ink-soft)' : '#f3f4f6', boxShadow: active ? 'var(--wb-shadow-md)' : undefined }}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
+      onClick={onCardClick}
+    >
       <img
         src={hasImageError ? FALLBACK_CARD_IMAGE : place.photoUrl}
         alt={place.name}

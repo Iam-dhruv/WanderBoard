@@ -411,3 +411,23 @@ export class OTEngine {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
   }
 }
+
+// ─── Conflict detection utility ───────────────────────────────────────────────
+
+/**
+ * Returns the first interval in `intervals` that overlaps [proposedStart, proposedEnd),
+ * or null if the slot is clear.
+ * Pass `excludeId` when resizing/moving an event to skip checking it against itself.
+ */
+export function checkConflict(
+  intervals: Interval[],
+  proposedStart: number,
+  proposedEnd: number,
+  excludeId?: string,
+): Interval | null {
+  for (const iv of intervals) {
+    if (excludeId && iv.id === excludeId) continue;
+    if (proposedStart < iv.end && proposedEnd > iv.start) return iv;
+  }
+  return null;
+}

@@ -32,8 +32,24 @@ interface PlacesNamespace {
   };
 }
 
+interface GeocoderResult {
+  place_id: string;
+  formatted_address: string;
+  geometry: {
+    location: { lat(): number; lng(): number };
+  };
+}
+
+interface Geocoder {
+  geocode(
+    request: { address: string },
+    callback: (results: GeocoderResult[] | null, status: string) => void,
+  ): void;
+}
+
 interface GoogleMaps {
   places: PlacesNamespace;
+  Geocoder: new () => Geocoder;
 }
 
 interface GoogleLike {
@@ -80,6 +96,33 @@ function mapPlaceResult(result: PlaceResult): Place | null {
     photoUrl: getPhotoUrl(result),
     placeId: result.place_id,
   };
+}
+
+export interface ResolvedPlace {
+  location: { lat: number; lng: number };
+  placeId: string;
+  name: string;
+}
+
+export async function resolvePlaceCoordinates(cityName: string): Promise<ResolvedPlace | null> {
+  const maps = window.google?.maps;
+  if (!maps?.Geocoder) return null;
+
+  const geocoder = new maps.Geocoder();
+  return new Promise((resolve) => {
+    geocoder.geocode({ address: cityName }, (results, status) => {
+      if (status !== 'OK' || !results || results.length === 0) {
+        resolve(null);
+        return;
+      }
+      const r = results[0];
+      resolve({
+        location: { lat: r.geometry.location.lat(), lng: r.geometry.location.lng() },
+        placeId: r.place_id,
+        name: r.formatted_address,
+      });
+    });
+  });
 }
 
 export async function searchPlaces(query: string): Promise<Place[]> {

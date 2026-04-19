@@ -1,15 +1,18 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
+import { createContext, useContext, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { NavLink, Outlet, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
-import type { TripMember } from '@/types';
+import type { Trip, TripMember } from '@/types';
 import { getTrip, getTripMembers } from './tripService';
 import { useTripStore } from './useTripStore';
 import { WeatherDashboard } from '@/features/weather';
 import { useWeatherStore } from '@/features/weather';
 import { getCoordinatesFromCity, type Coordinates } from '@/features/weather/geocodingService';
+import { Avatar } from '@/components/Avatar';
+import { MapView } from '@/components/MapView';
+import { TripMapProvider, useTripMap } from './TripMapContext';
 
-// ─── Geocoding state shape ─────────────────────────────────────────────────────
+// ─── Geocoding context (destination lat/lon for weather + initial map centre) ──
 
 export type GeoState =
   | { status: 'idle' }
@@ -17,20 +20,22 @@ export type GeoState =
   | { status: 'error'; message: string }
   | { status: 'ready'; coords: Coordinates };
 
-// ─── Context — lets child routes (Timeline, etc.) read resolved coords ─────────
-// This avoids re-geocoding the same destination inside every child page.
-
-interface TripGeoContextValue {
-  geo: GeoState;
-}
-
+interface TripGeoContextValue { geo: GeoState }
 const TripGeoContext = createContext<TripGeoContextValue>({ geo: { status: 'idle' } });
 
-/** Call inside any child route rendered by TripWorkspacePage to get the
- *  already-resolved destination coordinates without re-geocoding. */
 export function useTripGeo(): TripGeoContextValue {
   return useContext(TripGeoContext);
 }
+
+// ─── Workspace tabs config ─────────────────────────────────────────────────────
+
+const TABS = (tripId: string) => [
+  { label: 'Plan',        to: ROUTES.tripPlanning(tripId) },
+  { label: 'Bucket list', to: ROUTES.tripBucketList(tripId) },
+  { label: 'Discover',    to: ROUTES.tripDiscovery(tripId) },
+  { label: 'Weather',     to: ROUTES.tripContingency(tripId) },
+  { label: 'Expenses',    to: ROUTES.tripExpenses(tripId) },
+];
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -38,33 +43,22 @@ export function TripWorkspacePage() {
   const { tripId } = useParams<{ tripId: string }>();
   const { user }   = useAuth();
   const navigate   = useNavigate();
-  const loc        = useLocation();
   const { activeTrip, members, setActiveTrip, setMembers } = useTripStore();
-  const resetWeather = useWeatherStore(s => s.reset);
+  const resetWeather = useWeatherStore((s) => s.reset);
 
   const [geo, setGeo] = useState<GeoState>({ status: 'idle' });
 
-  // ── Load trip + members ──────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
-    if (!tripId) {
-      navigate(ROUTES.DASHBOARD, { replace: true });
-      return () => { cancelled = true; };
-    }
-
+    if (!tripId) { navigate(ROUTES.DASHBOARD, { replace: true }); return; }
     Promise.all([getTrip(tripId), getTripMembers(tripId)]).then(
       ([tripResult, membersResult]) => {
         if (cancelled) return;
-        if (!tripResult.ok) {
-          navigate(ROUTES.DASHBOARD, { replace: true });
-          return;
-        }
+        if (!tripResult.ok) { navigate(ROUTES.DASHBOARD, { replace: true }); return; }
         setActiveTrip(tripResult.data);
         if (membersResult.ok) setMembers(membersResult.data);
       },
     );
-
     return () => {
       cancelled = true;
       setActiveTrip(null);
@@ -72,236 +66,385 @@ export function TripWorkspacePage() {
     };
   }, [tripId, navigate, setActiveTrip, setMembers, resetWeather]);
 
-  // ── Geocode destination whenever it changes ──────────────────────────────────
   useEffect(() => {
     if (!activeTrip?.destination) return;
-
     setGeo({ status: 'loading' });
-
-    function extractPrimaryCity(destination: string) {
-      return destination.split(';')[0].trim();
-    }
-
-    getCoordinatesFromCity(extractPrimaryCity(activeTrip.destination)).then((result) => {
-      if (result.ok) {
-        setGeo({ status: 'ready', coords: result.data });
-      } else {
-        setGeo({ status: 'error', message: result.error });
-      }
+    const primaryCity = activeTrip.destination.split(';')[0].trim();
+    getCoordinatesFromCity(primaryCity).then((result) => {
+      setGeo(result.ok ? { status: 'ready', coords: result.data } : { status: 'error', message: result.error });
     });
   }, [activeTrip?.destination]);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
 
-  // Full-screen layout for discovery + timeline (no sidebar)
-  const isFullScreen =
-    loc.pathname.includes('/discovery') ||
-    loc.pathname.includes('/timeline');
-
   if (!activeTrip) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-sm text-gray-400">Loading trip...</p>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--wb-paper)' }}>
+        <div className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>Loading trip…</div>
       </div>
     );
   }
 
   return (
     <TripGeoContext.Provider value={{ geo }}>
-      <div
-        className={
-          isFullScreen
-            ? 'h-screen overflow-hidden bg-gray-50 flex flex-col'
-            : 'min-h-screen bg-gray-50'
-        }
-      >
-        {/* ── Top header ──────────────────────────────────────────────────────── */}
-        <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4 flex-shrink-0">
-          <Link to={ROUTES.DASHBOARD} className="text-sm text-gray-400 hover:text-gray-700">
-            Back to Trips
-          </Link>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-semibold text-gray-900 truncate">{activeTrip.name}</h1>
-            <p className="text-xs text-gray-400 truncate">
-              {activeTrip.destination} | {activeTrip.startDate} to {activeTrip.endDate}
-            </p>
-          </div>
-          {isOwner && (
-            <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full">
-              Trip owner
-            </div>
-          )}
-        </header>
-
-        {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-        <div className="bg-white border-b border-gray-100 flex-shrink-0">
-          <nav className="max-w-6xl mx-auto px-6 flex items-center gap-2 overflow-x-auto py-3">
-            <TabLink to="planning"    label="Planning" />
-            <TabLink to="bucket-list" label="Bucket list" />
-            <TabLink to="discovery"   label="Discovery" />
-            <TabLink to="timeline"    label="Timeline" />
-            <TabLink to="expenses"    label="Expenses" />
-            <TabLink to="contingency" label="Contingency" />
-          </nav>
-        </div>
-
-        {/* ── Content ─────────────────────────────────────────────────────────── */}
-        {isFullScreen ? (
-          <main className="flex-1 min-h-0">
-            <Outlet />
-          </main>
-        ) : (
-          <main className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-            {/* Left: routed feature panel */}
-            <section className="lg:col-span-2 min-w-0 space-y-6">
-              <Outlet />
-            </section>
-
-            {/* Right: sticky sidebar — travelers + weather */}
-            <aside className="space-y-4">
-              {/* Travelers card */}
-              <div className="bg-white rounded-xl border border-gray-100 p-4 sticky top-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-700">Travelers</h3>
-                  <span className="text-xs text-gray-400">{members.length}</span>
-                </div>
-
-                {isOwner && (
-                  <div className="mb-4 bg-gray-50 rounded-lg px-3 py-2.5">
-                    <p className="text-xs text-gray-500 mb-1">Invite code</p>
-                    <p className="font-mono font-semibold text-gray-900 tracking-widest text-sm">
-                      {activeTrip.inviteCode}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-1">Share with group members</p>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  {members.map((member) => (
-                    <MemberRow
-                      key={member.userId}
-                      member={member}
-                      isCurrentUser={member.userId === user?.uid}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Weather panel — sits below travelers in the sidebar */}
-              <GeoWeatherPanel
-                geo={geo}
-                date={activeTrip.startDate}
-                destination={activeTrip.destination}
-              />
-            </aside>
-          </main>
-        )}
-      </div>
+      <TripMapProvider>
+        <WorkspaceShell
+          geo={geo}
+          isOwner={isOwner}
+          members={members}
+          activeTrip={activeTrip}
+          user={user}
+        />
+      </TripMapProvider>
     </TripGeoContext.Provider>
   );
 }
 
-// ─── GeoWeatherPanel ───────────────────────────────────────────────────────────
-// Sidebar weather widget. Handles all three geocoding states.
+// ─── Shell (needs TripMapContext) ──────────────────────────────────────────────
 
-function GeoWeatherPanel({
-  geo,
-  date,
-  destination,
+function WorkspaceShell({
+  geo, isOwner, members, activeTrip, user,
 }: {
   geo: GeoState;
-  date: string;
-  destination: string;
+  isOwner: boolean;
+  members: TripMember[];
+  activeTrip: Trip;
+  user: ReturnType<typeof useAuth>['user'];
 }) {
-  if (geo.status === 'idle' || geo.status === 'loading') {
-    return (
-      <div className="bg-white rounded-xl border border-gray-100 px-4 py-4">
-        <p className="text-xs font-medium text-gray-500 mb-2">🌍 Weather</p>
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <MiniSpinner />
-          Locating {destination}…
+  const location = useLocation();
+  const isDiscovery = location.pathname.includes('/discovery');
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => Math.floor(window.innerWidth * 0.5));
+  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+
+  const {
+    mapRef, mapMarkers, selectedMarkerId, hoveredMarkerId, renderInfoWindow,
+    setMapLoaded, setIdleTick, setSelectedMarkerId,
+  } = useTripMap();
+
+  // Markers with highlighted state computed here (not stored in context)
+  const displayMarkers = mapMarkers.map((m) => ({
+    ...m,
+    highlighted: m.id === selectedMarkerId || m.id === hoveredMarkerId,
+  }));
+
+  function handleMapLoad(map: google.maps.Map) {
+    mapRef.current = map;
+    setMapLoaded(true);
+    map.addListener('idle', () => setIdleTick((t) => t + 1));
+  }
+
+  function handleMarkerClick(id: string) {
+    setSelectedMarkerId(selectedMarkerId === id ? null : id);
+  }
+
+  function startRightPanelResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const minWidth = 320;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const maxWidth = Math.floor(window.innerWidth * 0.5);
+      const nextWidth = window.innerWidth - moveEvent.clientX;
+      setRightPanelWidth(Math.max(minWidth, Math.min(maxWidth, nextWidth)));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  return (
+    <div className="h-screen overflow-hidden flex flex-col" style={{ background: 'var(--wb-paper)' }}>
+
+      {/* ── App nav ── */}
+      <header
+        className="flex items-center gap-5 px-8 py-4 flex-shrink-0"
+        style={{ background: 'var(--wb-paper)', borderBottom: '1px solid var(--wb-line)' }}
+      >
+        <div className="flex items-center gap-2.5 font-extrabold text-[18px] tracking-tight" style={{ color: 'var(--wb-ink)' }}>
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center border-[1.5px]"
+            style={{ background: 'var(--wb-sun)', borderColor: 'var(--wb-ink)', boxShadow: '2px 2px 0 var(--wb-ink)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0F1C2E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 11l19-9-9 19-2-8-8-2z" />
+            </svg>
+          </div>
+          WanderBoard
+        </div>
+        <nav className="flex gap-1 ml-5">
+          <Link to={ROUTES.DASHBOARD} className="px-3 py-[7px] rounded-lg text-sm font-medium hover:bg-wb-paper-2 transition-colors" style={{ color: 'var(--wb-ink-soft)' }}>
+            My Trips
+          </Link>
+          <span className="px-3 py-[7px] rounded-lg text-sm font-semibold" style={{ background: 'var(--wb-ink)', color: '#fff' }}>
+            {activeTrip.name}
+          </span>
+        </nav>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="wb-sticker sun rot-r text-xs">{getDaysToGo(activeTrip.startDate)} days to go</span>
+          {user && <Avatar displayName={user.displayName ?? user.email ?? 'U'} photoURL={user.photoURL} size="md" />}
+        </div>
+      </header>
+
+      {/* ── Workspace top bar ── */}
+      <div
+        className="flex items-center gap-4 px-6 py-3.5 flex-shrink-0"
+        style={{ background: '#fff', borderBottom: '1px solid var(--wb-line)' }}
+      >
+        <Link
+          to={ROUTES.DASHBOARD}
+          className="flex items-center gap-1.5 text-sm font-medium transition-colors hover:opacity-70"
+          style={{ color: 'var(--wb-ink-soft)' }}
+        >
+          ← All trips
+        </Link>
+
+        <div className="ml-2">
+          <h1 className="font-fraunces text-[22px] font-bold leading-tight tracking-tight" style={{ color: 'var(--wb-ink)' }}>
+            {activeTrip.name}
+          </h1>
+          <p className="text-xs" style={{ color: 'var(--wb-ink-soft)' }}>
+            {activeTrip.destination} · {activeTrip.startDate} → {activeTrip.endDate} ·{' '}
+            <span className="font-semibold" style={{ color: 'var(--wb-ink)' }}>
+              {isOwner ? "You're the owner" : 'You are a member'}
+            </span>
+          </p>
+        </div>
+
+        {/* Tab segmented control */}
+        <div className="ml-5 flex gap-1 p-1 rounded-[10px]" style={{ background: 'var(--wb-paper-2)' }}>
+          {TABS(activeTrip.id).map(({ label, to }) => (
+            <NavLink
+              key={label}
+              to={to}
+              className={({ isActive }) => [
+                'px-3 py-[7px] rounded-[7px] text-[13px] font-semibold transition-all duration-[120ms]',
+                isActive ? 'bg-white shadow-wb-sm text-wb-ink' : 'text-wb-ink-soft hover:text-wb-ink',
+              ].join(' ')}
+            >
+              {label}
+            </NavLink>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full" style={{ background: 'var(--wb-moss)', boxShadow: '0 0 0 3px rgba(107,143,62,0.25)' }} />
+            <span className="text-xs font-medium" style={{ color: 'var(--wb-ink-soft)' }}>
+              {members.length} planning now
+            </span>
+          </div>
+          <button
+            onClick={() => setIsRightPanelCollapsed((prev) => !prev)}
+            className="wb-btn wb-btn-ghost wb-btn-sm"
+          >
+            {isRightPanelCollapsed ? 'Show panel' : 'Hide panel'}
+          </button>
+          <button className="wb-btn wb-btn-ghost wb-btn-sm">Share</button>
+          <button className="wb-btn wb-btn-accent wb-btn-sm">Publish itinerary</button>
         </div>
       </div>
-    );
-  }
 
-  if (geo.status === 'error') {
-    return (
-      <div className="bg-white rounded-xl border border-gray-100 px-4 py-4">
-        <p className="text-xs font-medium text-gray-700 mb-1">🌍 Weather</p>
-        <p className="text-xs text-red-500">{geo.message}</p>
+      {/* ── Split pane ── */}
+      <div className="flex-1 min-h-0 flex">
+
+        {/* LEFT: Shared map canvas */}
+        <div
+          className={[ 'relative overflow-hidden flex-1 min-w-0', !isRightPanelCollapsed ? 'border-r' : '' ].join(' ')}
+          style={{
+            borderColor: 'var(--wb-line)',
+            background: 'radial-gradient(1200px 700px at 30% 30%, #DDEAF3, transparent 60%), radial-gradient(900px 500px at 70% 80%, #FAEFD9, transparent 60%), #EEE4CC',
+          }}
+        >
+          <MapView
+            center={geo.status === 'ready' ? { lat: geo.coords.lat, lng: geo.coords.lon } : undefined}
+            zoom={isDiscovery ? 13 : 11}
+            markers={displayMarkers}
+            selectedMarkerId={selectedMarkerId ?? undefined}
+            onMarkerClick={handleMarkerClick}
+            onInfoWindowClose={() => setSelectedMarkerId(null)}
+            renderInfoWindow={renderInfoWindow ?? undefined}
+            onLoad={handleMapLoad}
+            onUnmount={() => { mapRef.current = null; }}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+          />
+
+          {/* Map chrome chips */}
+          <div className="absolute left-4 top-4 flex flex-col gap-2 z-10">
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-xs font-semibold"
+              style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)', color: 'var(--wb-ink)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              {isDiscovery ? 'Discover' : 'Route view'}
+            </div>
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-xs font-semibold"
+              style={{ background: 'var(--wb-paper-2)', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)', color: 'var(--wb-ink)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              {activeTrip.destination}
+            </div>
+          </div>
+
+          {/* Zoom controls — wired to shared mapRef */}
+          <div
+            className="absolute right-4 top-4 z-10 overflow-hidden rounded-[10px]"
+            style={{ border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)' }}
+          >
+            <button
+              onClick={() => { const z = mapRef.current?.getZoom() ?? 12; mapRef.current?.setZoom(z + 1); }}
+              className="w-9 h-9 bg-white flex items-center justify-center text-lg font-bold hover:bg-wb-paper-2 transition-colors"
+              style={{ color: 'var(--wb-ink)' }}
+            >+</button>
+            <button
+              onClick={() => { const z = mapRef.current?.getZoom() ?? 12; mapRef.current?.setZoom(z - 1); }}
+              className="w-9 h-9 bg-white flex items-center justify-center text-lg font-bold border-t hover:bg-wb-paper-2 transition-colors"
+              style={{ color: 'var(--wb-ink)', borderColor: 'var(--wb-line)' }}
+            >−</button>
+          </div>
+
+          {isRightPanelCollapsed && (
+            <button
+              onClick={() => setIsRightPanelCollapsed(false)}
+              className="absolute right-4 top-20 z-10 rounded-[10px] px-3 py-2 text-xs font-semibold"
+              style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)', color: 'var(--wb-ink)' }}
+            >
+              Show panel
+            </button>
+          )}
+
+          {/* Weather card */}
+          <GeoWeatherCard geo={geo} trip={activeTrip} />
+
+          {/* Members panel */}
+          <div
+            className="absolute bottom-4 left-4 z-10 rounded-[14px] p-3 w-[220px]"
+            style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-md)' }}
+          >
+            <h5 className="text-[11px] font-bold tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--wb-ink-soft)' }}>
+              Travelers · {members.length}
+            </h5>
+            {members.map((m) => (
+              <MemberRow key={m.userId} member={m} isCurrentUser={m.userId === user?.uid} />
+            ))}
+            {isOwner && activeTrip.inviteCode && (
+              <div className="mt-3 pt-3" style={{ borderTop: '1px dashed var(--wb-line)' }}>
+                <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--wb-ink-soft)' }}>Invite code</p>
+                <p className="font-jetbrains font-bold tracking-widest text-sm" style={{ color: 'var(--wb-ink)' }}>
+                  {activeTrip.inviteCode}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!isRightPanelCollapsed && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={startRightPanelResize}
+            className="w-2 cursor-col-resize flex-shrink-0"
+            style={{ background: 'var(--wb-paper-2)', borderLeft: '1px solid var(--wb-line)', borderRight: '1px solid var(--wb-line)' }}
+          />
+        )}
+
+        {/* RIGHT: feature panel */}
+        {!isRightPanelCollapsed && (
+        <div
+          className="flex flex-col overflow-hidden flex-shrink-0"
+          style={{ background: 'var(--wb-paper)', width: rightPanelWidth, maxWidth: '50vw' }}
+        >
+          {/* Header — hidden for Discovery (it renders its own) */}
+          {!isDiscovery && (
+            <div className="px-6 pt-5 pb-3 flex-shrink-0" style={{ borderBottom: '1px solid var(--wb-line)' }}>
+              <div className="flex items-center justify-between">
+                <h2
+                  className="font-fraunces text-[28px] font-bold leading-tight tracking-tight"
+                  style={{ color: 'var(--wb-ink)' }}
+                >
+                  Day{' '}
+                  <em className="italic" style={{ color: 'var(--wb-sunset)', fontVariationSettings: '"SOFT" 100' }}>by</em>
+                  {' '}day
+                </h2>
+                <button
+                  className="wb-btn wb-btn-sm flex items-center gap-1.5"
+                  style={{ background: 'var(--wb-paper-2)', color: 'var(--wb-ink)', border: '1.5px solid var(--wb-line)' }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                  </svg>
+                  Edit
+                </button>
+              </div>
+              <p className="text-[13px] mt-1" style={{ color: 'var(--wb-ink-soft)' }}>
+                Drag activities from the bucket list into slots. {isOwner ? 'You can reorder.' : 'Owner can reorder.'}
+              </p>
+            </div>
+          )}
+
+          {/* Scrollable content — Discovery manages its own scroll */}
+          <div className={isDiscovery ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto'}>
+            <Outlet />
+          </div>
+        </div>
+        )}
+
       </div>
-    );
-  }
-
-  // status === 'ready'
-  return (
-    <WeatherDashboard
-      lat={geo.coords.lat}
-      lon={geo.coords.lon}
-      date={date}
-    />
+    </div>
   );
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function TabLink({ to, label }: { to: string; label: string }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        [
-          'whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-          isActive
-            ? 'bg-indigo-50 text-indigo-700'
-            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800',
-        ].join(' ')
-      }
-    >
-      {label}
-    </NavLink>
-  );
-}
-
-function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUser: boolean }) {
-  const initials = member.displayName
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+function GeoWeatherCard({ geo, trip }: { geo: GeoState; trip: { startDate: string; destination: string } }) {
+  if (geo.status === 'idle' || geo.status === 'loading') {
+    return (
+      <div
+        className="absolute bottom-4 right-4 z-10 rounded-[16px] p-4 w-[200px] flex items-center gap-2 text-xs"
+        style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-md)', color: 'var(--wb-ink-soft)' }}
+      >
+        <svg className="animate-spin w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+          <path fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" opacity="0.75" />
+        </svg>
+        Locating {trip.destination.split(';')[0]}…
+      </div>
+    );
+  }
+  if (geo.status === 'error') return null;
 
   return (
-    <div className="flex items-center gap-2.5">
-      <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-medium flex-shrink-0">
-        {initials}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-800 truncate">
-          {member.displayName}
-          {isCurrentUser && <span className="text-gray-400 font-normal"> (you)</span>}
-        </p>
-      </div>
-      <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
-        member.role === 'owner' ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-500'
-      }`}>
-        {member.role}
-      </span>
+    <div className="absolute bottom-4 right-4 z-10 rounded-[16px] overflow-hidden" style={{ width: 280, boxShadow: 'var(--wb-shadow-md)' }}>
+      <WeatherDashboard lat={geo.coords.lat} lon={geo.coords.lon} date={trip.startDate} />
     </div>
   );
 }
 
-function MiniSpinner() {
+function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUser: boolean }) {
   return (
-    <svg
-      className="animate-spin h-3.5 w-3.5 text-gray-400 flex-shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-    </svg>
+    <div className="flex items-center gap-2 py-1">
+      <div className="relative">
+        <Avatar displayName={member.displayName} photoURL={member.photoURL} size="sm" />
+        <span className="absolute -bottom-px -right-px w-2.5 h-2.5 rounded-full border-2 border-white" style={{ background: 'var(--wb-moss)' }} />
+      </div>
+      <span className="text-[13px] font-semibold flex-1 truncate" style={{ color: 'var(--wb-ink)' }}>
+        {member.displayName}{isCurrentUser && <span style={{ color: 'var(--wb-ink-soft)', fontWeight: 400 }}> (you)</span>}
+      </span>
+      <span className="text-[10px] uppercase tracking-[0.1em] flex-shrink-0" style={{ color: 'var(--wb-ink-soft)' }}>{member.role}</span>
+    </div>
   );
+}
+
+function getDaysToGo(startDate: string): number {
+  return Math.max(0, Math.ceil((new Date(startDate).getTime() - Date.now()) / 86400000));
 }

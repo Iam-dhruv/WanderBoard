@@ -1,110 +1,171 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import type { ReactNode } from 'react';
+import { useJsApiLoader } from '@react-google-maps/api';
+import type { MapMarker } from '@/components/MapView';
 import { DiscoveryList } from '@/features/discovery/components/DiscoveryList';
 import type { Place } from '@/features/discovery/types';
+import { getPlaceColor, getPlaceLabel } from '@/features/discovery/utils/placeColor';
+import { addToBucket } from '@/features/discovery/services/bucketService';
+import { useAuth } from '@/features/auth/AuthProvider';
 import { useTripStore } from './useTripStore';
+import { useTripMap } from './TripMapContext';
+import { useTripGeo } from './TripWorkspacePage';
 
 const MAP_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
 const SEARCH_DEBOUNCE_MS = 350;
-const MIN_RADIUS_METERS = 500;
-const MAX_RADIUS_METERS = 50000;
-
-function getPrimaryDestination(destination: string): string {
-  return destination
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)[0] ?? destination.trim();
-}
+const MIN_RADIUS_METERS  = 500;
+const MAX_RADIUS_METERS  = 50_000;
 
 function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
-  if (!result.place_id || !result.name) {
-    return null;
-  }
+  if (!result.place_id || !result.name) return null;
 
   const photo = result.photos?.[0];
   let photoUrl = '';
-
   if (photo) {
-    try {
-      photoUrl = photo.getUrl({ maxWidth: 800, maxHeight: 600 });
-    } catch {
-      photoUrl = '';
-    }
+    try { photoUrl = photo.getUrl({ maxWidth: 800, maxHeight: 600 }); } catch { photoUrl = ''; }
   }
 
   return {
-    placeId: result.place_id,
-    name: result.name,
-    rating: typeof result.rating === 'number' ? result.rating : 0,
-    address: result.vicinity ?? result.formatted_address ?? 'Address unavailable',
+    placeId:  result.place_id,
+    name:     result.name,
+    rating:   typeof result.rating === 'number' ? result.rating : 0,
+    address:  result.vicinity ?? result.formatted_address ?? 'Address unavailable',
     photoUrl,
+    types:    result.types ?? [],
     location: result.geometry?.location
-      ? {
-          lat: result.geometry.location.lat(),
-          lng: result.geometry.location.lng(),
-        }
+      ? { lat: result.geometry.location.lat(), lng: result.geometry.location.lng() }
       : undefined,
   };
 }
 
+// ─── Info-window card rendered on the shared map ───────────────────────────────
+
+function PlaceInfoCard({ place, tripId }: { place: Place; tripId: string }) {
+  const { user } = useAuth();
+  const [added,  setAdded]  = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [error,  setError]  = useState<string | null>(null);
+
+  const color = getPlaceColor(place.types ?? []);
+  const label = getPlaceLabel(place.types ?? []);
+
+  async function handleQuickAdd() {
+    if (!user || added || adding) return;
+    setAdding(true);
+    setError(null);
+    const result = await addToBucket(tripId, place, {
+      userId:      user.uid,
+      displayName: user.displayName ?? user.email ?? 'Traveler',
+      photoURL:    user.photoURL ?? null,
+    });
+    setAdding(false);
+    if (result.ok || result.error?.includes('already')) {
+      setAdded(true);
+    } else {
+      setError(result.error);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 240, fontFamily: 'Inter, sans-serif' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color }}>{label}</span>
+      </div>
+      <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--wb-ink)', lineHeight: 1.3, margin: '0 0 2px' }}>{place.name}</p>
+      <p style={{ fontSize: 11, color: 'var(--wb-ink-soft)', margin: '0 0 8px' }}>
+        <span style={{ color: 'var(--wb-sun)' }}>★</span> {place.rating.toFixed(1)}
+      </p>
+      {error && <p style={{ fontSize: 11, color: 'var(--wb-sunset)', marginBottom: 6 }}>{error}</p>}
+      <button
+        onClick={handleQuickAdd}
+        disabled={added || adding || !user}
+        style={{
+          display: 'block', width: '100%', padding: '6px 0', borderRadius: 8, border: 'none',
+          background: added ? 'var(--wb-moss)' : 'var(--wb-ink)', color: 'var(--wb-paper)',
+          fontSize: 12, fontWeight: 600, cursor: added || adding ? 'default' : 'pointer',
+          opacity: adding ? 0.7 : 1,
+        }}
+      >
+        {added ? '✓ Added' : adding ? 'Adding…' : '+ Add to bucket list'}
+      </button>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export function TripDiscoveryPage() {
   const { activeTrip } = useTripStore();
-  const [tripLocation, setTripLocation] = useState<google.maps.LatLngLiteral | null>(null);
-  const [mapError, setMapError] = useState<string | null>(null);
-  const [places, setPlaces] = useState<Place[]>([]);
+  const { geo }        = useTripGeo();
+  const {
+    mapRef, idleTick,
+    setMapMarkers, setSelectedMarkerId, setHoveredMarkerId, setRenderInfoWindow,
+    selectedMarkerId, hoveredMarkerId,
+  } = useTripMap();
+
+  const [places,      setPlaces]      = useState<Place[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading,     setLoading]     = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [idleTick, setIdleTick] = useState(0);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const debounceTimerRef = useRef<number | null>(null);
-  const requestIdRef = useRef(0);
 
-  const { isLoaded, loadError } = useJsApiLoader({
-    id: 'google-map-script',
+  const debounceTimerRef     = useRef<number | null>(null);
+  const requestIdRef         = useRef(0);
+  const autocompleteInputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef      = useRef<google.maps.places.Autocomplete | null>(null);
+
+  const { isLoaded } = useJsApiLoader({
+    id:               'google-map-script',
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
-    libraries: MAP_LIBRARIES,
+    libraries:        MAP_LIBRARIES,
   });
-
-  useEffect(() => {
-    if (!activeTrip || !isLoaded) return;
-
-    setTripLocation(null);
-    setMapError(null);
-
-    const geocoder = new window.google.maps.Geocoder();
-    geocoder.geocode({ address: getPrimaryDestination(activeTrip.destination) }, (results, status) => {
-      if (status === 'OK' && results?.[0]?.geometry?.location) {
-        setTripLocation({
-          lat: results[0].geometry.location.lat(),
-          lng: results[0].geometry.location.lng(),
-        });
-        return;
-      }
-
-      setTripLocation(null);
-      setMapError('Unable to locate this destination.');
-    });
-  }, [activeTrip, isLoaded]);
 
   const normalizedQuery = useMemo(() => searchQuery.trim(), [searchQuery]);
 
+  // Attach Places Autocomplete for camera fly-to
+  useEffect(() => {
+    if (!isLoaded || !autocompleteInputRef.current) return;
+
+    autocompleteRef.current = new window.google.maps.places.Autocomplete(
+      autocompleteInputRef.current,
+      { fields: ['geometry', 'name'] },
+    );
+
+    autocompleteRef.current.addListener('place_changed', () => {
+      const p = autocompleteRef.current?.getPlace();
+      if (!p?.geometry?.location) return;
+      const loc = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+      mapRef.current?.panTo(loc);
+      mapRef.current?.setZoom(14);
+    });
+
+    return () => {
+      if (autocompleteRef.current) {
+        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  }, [isLoaded, mapRef]);
+
+  // Scroll sidebar to card when a pin is selected
+  useEffect(() => {
+    if (!selectedMarkerId) return;
+    document.getElementById(`place-card-${selectedMarkerId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [selectedMarkerId]);
+
   const executeNearbySearch = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !window.google?.maps?.places || !window.google?.maps?.geometry) {
-      return;
-    }
+    if (!map || !window.google?.maps?.places || !window.google?.maps?.geometry) return;
 
     const center = map.getCenter();
     const bounds = map.getBounds();
-    if (!center || !bounds) {
-      return;
-    }
+    if (!center || !bounds) return;
 
     const ne = bounds.getNorthEast();
     const sw = bounds.getSouthWest();
-    const viewportDiameter = window.google.maps.geometry.spherical.computeDistanceBetween(ne, sw);
+    const viewportDiameter =
+      window.google.maps.geometry.spherical.computeDistanceBetween(ne, sw);
     const radius = Math.max(
       MIN_RADIUS_METERS,
       Math.min(MAX_RADIUS_METERS, Math.round(viewportDiameter / 2)),
@@ -116,156 +177,164 @@ export function TripDiscoveryPage() {
 
     const service = new window.google.maps.places.PlacesService(map);
     service.nearbySearch(
-      {
-        location: center,
-        radius,
-        keyword: normalizedQuery || undefined,
-      },
+      { location: center, radius, keyword: normalizedQuery || undefined },
       (results, status) => {
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-
+        if (requestId !== requestIdRef.current) return;
         setHasSearched(true);
-
         if (status === window.google.maps.places.PlacesServiceStatus.ZERO_RESULTS || !results) {
-          setPlaces([]);
-          setLoading(false);
-          return;
+          setPlaces([]); setLoading(false); return;
         }
-
         if (status !== window.google.maps.places.PlacesServiceStatus.OK) {
-          setPlaces([]);
-          setSearchError(`Places search failed with status: ${status}`);
-          setLoading(false);
-          return;
+          setPlaces([]); setSearchError(`Search failed: ${status}`); setLoading(false); return;
         }
-
-        const mappedPlaces = results
-          .map(mapNearbyResult)
-          .filter((place): place is Place => place !== null);
-
-        setPlaces(mappedPlaces);
+        setPlaces(results.map(mapNearbyResult).filter((p): p is Place => p !== null));
         setLoading(false);
       },
     );
-  }, [normalizedQuery]);
+  }, [normalizedQuery, mapRef]);
 
+  // Debounced re-search on idle (pan/zoom via context idleTick) or keyword change
   useEffect(() => {
-    if (!tripLocation || !mapRef.current || !isLoaded) {
-      return;
-    }
+    if (geo.status !== 'ready' || !mapRef.current || !isLoaded) return;
 
-    if (debounceTimerRef.current !== null) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = window.setTimeout(() => {
-      executeNearbySearch();
-    }, SEARCH_DEBOUNCE_MS);
+    if (debounceTimerRef.current !== null) window.clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = window.setTimeout(executeNearbySearch, SEARCH_DEBOUNCE_MS);
 
     return () => {
-      if (debounceTimerRef.current !== null) {
-        window.clearTimeout(debounceTimerRef.current);
-      }
+      if (debounceTimerRef.current !== null) window.clearTimeout(debounceTimerRef.current);
     };
-  }, [tripLocation, idleTick, isLoaded, normalizedQuery, executeNearbySearch]);
+  }, [geo.status, idleTick, isLoaded, normalizedQuery, executeNearbySearch, mapRef]);
 
   useEffect(() => () => {
-    if (debounceTimerRef.current !== null) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
+    if (debounceTimerRef.current !== null) window.clearTimeout(debounceTimerRef.current);
   }, []);
 
-  if (!activeTrip) {
-    return null;
+  // Push markers + info-window renderer into shared map context
+  useEffect(() => {
+    if (!activeTrip) return;
+    const markers: MapMarker[] = places
+      .filter((p) => p.location)
+      .map((p) => ({
+        id:       p.placeId,
+        position: p.location!,
+        title:    p.name,
+        color:    getPlaceColor(p.types ?? []),
+      }));
+    setMapMarkers(markers);
+
+    const renderer = (id: string): ReactNode => {
+      const place = places.find((p) => p.placeId === id);
+      return place ? <PlaceInfoCard place={place} tripId={activeTrip.id} /> : null;
+    };
+    setRenderInfoWindow(renderer);
+
+    return () => {
+      setMapMarkers([]);
+      setRenderInfoWindow(null);
+    };
+  }, [places, activeTrip, setMapMarkers, setRenderInfoWindow]);
+
+  // Clear marker selection on unmount
+  useEffect(() => () => {
+    setSelectedMarkerId(null);
+    setHoveredMarkerId(null);
+  }, [setSelectedMarkerId, setHoveredMarkerId]);
+
+  function handleCardClick(placeId: string) {
+    setSelectedMarkerId(placeId);
+    const loc = places.find((p) => p.placeId === placeId)?.location;
+    if (loc) mapRef.current?.panTo(loc);
   }
 
+  if (!activeTrip) return null;
+
   return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-50">
-      {!isLoaded && (
-        <div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>
-      )}
-      {loadError && (
-        <div className="flex h-full items-center justify-center text-sm text-red-500">Map failed to load.</div>
-      )}
-      {isLoaded && mapError && (
-        <div className="flex h-full items-center justify-center text-sm text-gray-500">{mapError}</div>
-      )}
-      {isLoaded && !mapError && !tripLocation && (
-        <div className="flex h-full items-center justify-center text-sm text-gray-500">Finding destination...</div>
-      )}
+    <div className="h-full flex flex-col" style={{ background: 'var(--wb-paper)' }}>
 
-      {isLoaded && tripLocation && (
-        <>
-          <GoogleMap
-            mapContainerStyle={{ width: '100%', height: '100%' }}
-            center={tripLocation}
-            zoom={13}
-            onLoad={(map) => {
-              mapRef.current = map;
-            }}
-            onUnmount={() => {
-              mapRef.current = null;
-            }}
-            onIdle={() => {
-              setIdleTick((value) => value + 1);
-            }}
-            options={{ streetViewControl: false, mapTypeControl: false, fullscreenControl: true }}
+      {/* Header */}
+      <div
+        className="px-6 pt-5 pb-4 flex-shrink-0"
+        style={{ borderBottom: '1px solid var(--wb-line)' }}
+      >
+        <p className="text-[11px] font-bold tracking-[0.2em] uppercase mb-0.5" style={{ color: 'var(--wb-ocean)' }}>Discovery</p>
+        <h2 className="font-fraunces text-[22px] font-bold leading-tight tracking-tight" style={{ color: 'var(--wb-ink)' }}>
+          Nearby places
+        </h2>
+      </div>
+
+      {/* Fly-to location search (Autocomplete) */}
+      <div className="px-6 pt-4 pb-3 flex-shrink-0">
+        <div
+          className="flex items-center gap-2 rounded-[10px] px-3 py-2.5"
+          style={{ border: '1.5px solid var(--wb-line)', background: '#fff', boxShadow: 'var(--wb-shadow-sm)' }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--wb-ink-soft)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input
+            ref={autocompleteInputRef}
+            type="text"
+            placeholder="Fly to a location…"
+            className="w-full border-0 bg-transparent text-sm outline-none placeholder:text-gray-400"
+            style={{ color: 'var(--wb-ink)' }}
+          />
+        </div>
+      </div>
+
+      {/* Keyword filter */}
+      <div className="px-6 pb-3 flex-shrink-0">
+        <p className="text-[11px] mb-2" style={{ color: 'var(--wb-ink-soft)' }}>Search follows the visible map area.</p>
+        <div
+          className="flex items-center gap-2 rounded-[10px] px-3 py-2.5"
+          style={{ border: '1.5px solid var(--wb-line)', background: '#fff', boxShadow: 'var(--wb-shadow-sm)' }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--wb-ink-soft)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+            <path d="M3 6h18M7 12h10M11 18h2"/>
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="cafes, viewpoints, museums…"
+            className="w-full border-0 bg-transparent text-sm outline-none placeholder:text-gray-400"
+            style={{ color: 'var(--wb-ink)' }}
+          />
+        </div>
+        {searchError && (
+          <div
+            className="mt-2 rounded-[10px] px-3 py-2 text-xs"
+            style={{ border: '1.5px solid var(--wb-sunset)', background: '#FEF2EE', color: 'var(--wb-sunset)' }}
           >
-            <Marker position={tripLocation} />
-            {places.map((place) =>
-              place.location ? (
-                <Marker
-                  key={`marker-${place.placeId}`}
-                  position={place.location}
-                  title={place.name}
-                />
-              ) : null,
-            )}
-          </GoogleMap>
-
-          <div className="absolute inset-x-3 top-3 bottom-3 z-10 sm:inset-y-4 sm:left-4 sm:right-auto sm:w-[min(92vw,28rem)] rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Discovery</p>
-              <h2 className="text-lg font-semibold text-gray-900">Nearby places</h2>
-              <p className="text-xs text-gray-500">Search region follows the visible map window.</p>
-            </div>
-
-            <div className="mt-4">
-              <label htmlFor="discovery-search-input" className="block text-sm font-medium text-gray-700">
-                Search nearby
-              </label>
-              <div className="mt-2 flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <input
-                  id="discovery-search-input"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="cafes, viewpoints, museums..."
-                  className="w-full border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
-                />
-              </div>
-              {searchError && (
-                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-700">
-                  {searchError}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 h-[calc(100%-12.5rem)] overflow-y-auto pr-1">
-              <DiscoveryList
-                tripId={activeTrip.id}
-                places={places}
-                isLoading={loading}
-                hasSearched={hasSearched}
-                tripStartDate={activeTrip.startDate}
-                tripEndDate={activeTrip.endDate}
-              />
-            </div>
+            {searchError}
           </div>
-        </>
-      )}
+        )}
+      </div>
+
+      {/* Place cards */}
+      <div className="flex-1 overflow-y-auto px-6 pb-6">
+        {geo.status === 'loading' || geo.status === 'idle' ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>Finding destination…</p>
+          </div>
+        ) : geo.status === 'error' ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>Location unavailable.</p>
+          </div>
+        ) : (
+          <DiscoveryList
+            tripId={activeTrip.id}
+            places={places}
+            isLoading={loading}
+            hasSearched={hasSearched}
+            tripStartDate={activeTrip.startDate}
+            tripEndDate={activeTrip.endDate}
+            selectedPlaceId={selectedMarkerId}
+            hoveredPlaceId={hoveredMarkerId}
+            onHoverChange={setHoveredMarkerId}
+            onCardClick={handleCardClick}
+          />
+        )}
+      </div>
     </div>
   );
 }

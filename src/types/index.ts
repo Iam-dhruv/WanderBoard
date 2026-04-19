@@ -8,6 +8,9 @@ export interface Trip {
   id: string;
   name: string;
   destination: string;
+  destinationLocation?: BucketListLocation;
+  destinationPlaceId?: string;
+  destinationPlaceName?: string;
   currency: string;
   startDate: string;         // ISO date string "YYYY-MM-DD"
   endDate: string;

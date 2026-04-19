@@ -1,51 +1,80 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '@/config/routes';
 import { useTripStore } from './useTripStore';
+import { subscribeTimeline } from '@/features/timeline/timelineService';
+import type { TimelineEvent } from '@/types';
+import { DayCard } from './components/DayCard';
+import { SlotRow, EmptySlotRow } from './components/SlotRow';
+
+function getDatesInRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const current = new Date(startDate);
+  const end = new Date(endDate);
+  if (isNaN(current.getTime()) || isNaN(end.getTime()) || current > end) return [];
+  while (current <= end) {
+    dates.push(current.toISOString().slice(0, 10));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
 
 export function TripPlanningPage() {
   const { activeTrip } = useTripStore();
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
 
-  if (!activeTrip) {
-    return null;
-  }
+  useEffect(() => {
+    if (!activeTrip) return;
+    const unsub = subscribeTimeline(activeTrip.id, setEvents, () => {});
+    return unsub;
+  }, [activeTrip]);
+
+  if (!activeTrip) return null;
+
+  const tripDays = getDatesInRange(activeTrip.startDate, activeTrip.endDate);
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl bg-white border border-gray-100 p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Planning</p>
-        <h2 className="mt-2 text-2xl font-semibold text-gray-900">Plan your trip together</h2>
-        <p className="mt-2 text-sm leading-6 text-gray-500">
-          Use this tab for itinerary and coordination details. Discovery now has its own full-screen
-          map tab with search overlays and viewport-based results.
-        </p>
-
-        <div className="mt-4">
-          <Link
-            to={ROUTES.tripDiscovery(activeTrip.id)}
-            className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
-          >
-            Open Discovery map
+    <div className="p-4">
+      {tripDays.length === 0 ? (
+        <div
+          className="rounded-[16px] p-8 text-center border-[1.5px] border-dashed"
+          style={{ borderColor: 'var(--wb-line)', background: '#fff' }}
+        >
+          <p className="text-sm font-medium mb-3" style={{ color: 'var(--wb-ink-soft)' }}>
+            Set trip dates to see your day-by-day plan.
+          </p>
+          <Link to={ROUTES.tripTimeline(activeTrip.id)} className="wb-btn wb-btn-primary wb-btn-sm">
+            Open full timeline →
           </Link>
         </div>
-      </section>
+      ) : (
+        <>
+          {tripDays.map((dateStr, idx) => {
+            const dayEvents = events
+              .filter((e) => e.date === dateStr)
+              .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''));
 
-      <section className="grid gap-4 sm:grid-cols-2">
-        <InfoCard label="Destination" value={activeTrip.destination} />
-        <InfoCard label="Travel dates" value={`${activeTrip.startDate} to ${activeTrip.endDate}`} />
-        <InfoCard label="Invite code" value={activeTrip.inviteCode} mono />
-        <InfoCard label="Status" value="Workspace ready" />
-      </section>
-    </div>
-  );
-}
+            return (
+              <DayCard key={dateStr} dateStr={dateStr} dayIndex={idx}>
+                {dayEvents.length > 0 ? (
+                  dayEvents.map((ev) => <SlotRow key={ev.id} event={ev} />)
+                ) : (
+                  <EmptySlotRow label="+ Add activities via Timeline or Discovery" />
+                )}
+              </DayCard>
+            );
+          })}
 
-function InfoCard({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="rounded-xl border border-gray-100 bg-white p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-2 text-sm font-medium text-gray-900 ${mono ? 'font-mono tracking-widest' : ''}`}>
-        {value}
-      </p>
+          <div className="mt-2 pb-4 text-center">
+            <Link
+              to={ROUTES.tripTimeline(activeTrip.id)}
+              className="wb-btn wb-btn-ghost wb-btn-sm"
+            >
+              Open full timeline with drag-drop →
+            </Link>
+          </div>
+        </>
+      )}
     </div>
   );
 }

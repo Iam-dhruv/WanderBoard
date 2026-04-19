@@ -26,6 +26,9 @@ const inviteDoc    = (code: string) => doc(db, 'tripInvites', code);
 export interface CreateTripInput {
   name: string;
   destination: string;
+  destinationLocation?: { lat: number; lng: number };
+  destinationPlaceId?: string;
+  destinationPlaceName?: string;
   currency: string;
   startDate: string;
   endDate: string;
@@ -36,10 +39,17 @@ export interface CreateTripInput {
 }
 
 function toTrip(id: string, data: Record<string, unknown>): Trip {
+  const destinationLocation = data.destinationLocation as { lat?: number; lng?: number } | undefined;
+
   return {
     id,
     name: String(data.name ?? ''),
     destination: String(data.destination ?? ''),
+    destinationLocation: destinationLocation && typeof destinationLocation.lat === 'number' && typeof destinationLocation.lng === 'number'
+      ? { lat: destinationLocation.lat, lng: destinationLocation.lng }
+      : undefined,
+    destinationPlaceId: typeof data.destinationPlaceId === 'string' ? data.destinationPlaceId : undefined,
+    destinationPlaceName: typeof data.destinationPlaceName === 'string' ? data.destinationPlaceName : undefined,
     currency: normalizeTripCurrency(typeof data.currency === 'string' ? data.currency : undefined),
     startDate: String(data.startDate ?? ''),
     endDate: String(data.endDate ?? ''),
@@ -59,6 +69,9 @@ export async function createTrip(input: CreateTripInput): Promise<Result<Trip>> 
       const trip: Omit<Trip, 'id'> = {
         name:        input.name.trim(),
         destination: input.destination.trim(),
+        destinationLocation: input.destinationLocation,
+        destinationPlaceId: input.destinationPlaceId,
+        destinationPlaceName: input.destinationPlaceName,
         currency:    normalizeTripCurrency(input.currency),
         startDate:   input.startDate,
         endDate:     input.endDate,

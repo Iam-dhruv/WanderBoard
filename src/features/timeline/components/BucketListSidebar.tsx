@@ -1,7 +1,12 @@
 // ─── BucketListSidebar.tsx ────────────────────────────────────────────────────
 // Left panel showing the trip's bucket list as draggable postcards.
 // Owner can drag a card onto the timeline grid to schedule it.
+// Owner can also drag a timeline event back here to un-schedule it.
 // Members see the same list but cannot drag.
+//
+// Drop-bug fix: onDragOver only accepts drags that carry 'text/timeline-event'
+// (set by EventCard's dragStart). Bucket-item drags don't carry that type, so
+// they pass through to the calendar underneath instead of being swallowed here.
 
 import { useEffect, useState } from 'react';
 import {
@@ -20,21 +25,25 @@ export interface BucketItem {
   rating: number;
   photoUrl: string;
   placeId: string;
+  durationMinutes?: number;
 }
 
 interface BucketListSidebarProps {
   tripId: string;
   isOwner: boolean;
   onDragStart: (item: BucketItem) => void;
+  onReturnEvent?: (eventId: string) => void;
 }
 
 export function BucketListSidebar({
   tripId,
   isOwner,
   onDragStart,
+  onReturnEvent,
 }: BucketListSidebarProps) {
   const [items, setItems] = useState<BucketItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dropTarget, setDropTarget] = useState(false);
 
   useEffect(() => {
     const q = query(
@@ -43,7 +52,17 @@ export function BucketListSidebar({
     );
     const unsub: Unsubscribe = onSnapshot(q, (snap) => {
       setItems(
-        snap.docs.map((d) => ({ id: d.id, ...d.data() } as BucketItem)),
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            durationMinutes:
+              typeof data.userData?.durationMinutes === 'number'
+                ? data.userData.durationMinutes
+                : undefined,
+          } as BucketItem;
+        }),
       );
       setLoading(false);
     });
@@ -51,23 +70,53 @@ export function BucketListSidebar({
   }, [tripId]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 pt-4 pb-3 border-b border-gray-100">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">
+    <div
+      className="flex flex-col h-full"
+      style={{
+        background: dropTarget ? 'rgba(14,107,168,0.04)' : 'var(--wb-paper)',
+        outline: dropTarget ? '2px dashed var(--wb-ocean)' : undefined,
+        borderRadius: dropTarget ? 12 : undefined,
+        transition: 'background 120ms',
+      }}
+      onDragOver={(e) => {
+        if (!isOwner) return;
+        // Only accept drops of existing timeline events — NOT bucket item drags
+        if (!e.dataTransfer.types.includes('text/timeline-event')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        setDropTarget(true);
+      }}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={(e) => {
+        setDropTarget(false);
+        if (!isOwner) return;
+        if (e.dataTransfer.getData('sourceType') === 'existing') {
+          e.preventDefault();
+          const eventId = e.dataTransfer.getData('eventId');
+          if (eventId) onReturnEvent?.(eventId);
+        }
+      }}
+    >
+      {/* Header */}
+      <div style={{ borderBottom: '1px solid var(--wb-line)', padding: '16px 16px 12px', background: 'var(--wb-paper)' }}>
+        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--wb-ocean)', marginBottom: 2 }}>
           Bucket list
         </p>
-        <p className="text-sm font-medium text-gray-800 mt-0.5">
-          {isOwner ? 'Drag to schedule' : 'Saved activities'}
+        <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--wb-ink)' }}>
+          {isOwner ? 'Drag to schedule · drop here to return' : 'Saved activities'}
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      {/* Scrollable list */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {loading && (
-          <p className="text-xs text-gray-400 text-center py-4">Loading…</p>
+          <p style={{ fontSize: 12, color: 'var(--wb-ink-soft)', textAlign: 'center', padding: '16px 0' }}>
+            Loading…
+          </p>
         )}
         {!loading && items.length === 0 && (
-          <div className="rounded-xl border border-dashed border-gray-200 py-8 px-3 text-center">
-            <p className="text-xs text-gray-400">
+          <div style={{ border: '1.5px dashed var(--wb-line)', borderRadius: 12, padding: '32px 12px', textAlign: 'center' }}>
+            <p style={{ fontSize: 12, color: 'var(--wb-ink-soft)', lineHeight: 1.5 }}>
               No bucket list items yet.
               <br />
               Discover places and save them.
@@ -99,6 +148,7 @@ function BucketCard({
   isOwner: boolean;
   onDragStart: (item: BucketItem) => void;
 }) {
+  const [hovered, setHovered] = useState(false);
   const stars = Math.round(item.rating);
 
   return (
@@ -110,46 +160,69 @@ function BucketCard({
               e.dataTransfer.setData('bucketItemId', item.id);
               e.dataTransfer.setData('bucketItemName', item.name);
               e.dataTransfer.setData('bucketItemAddress', item.address);
+              e.dataTransfer.setData('bucketItemDuration', String(item.durationMinutes ?? ''));
               e.dataTransfer.setData('sourceType', 'bucket');
               e.dataTransfer.effectAllowed = 'copy';
               onDragStart(item);
             }
           : undefined
       }
-      className={[
-        'rounded-xl border border-gray-100 bg-white overflow-hidden transition-all',
-        isOwner
-          ? 'cursor-grab hover:border-indigo-200 hover:shadow-sm active:opacity-70'
-          : 'cursor-default',
-      ].join(' ')}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        borderRadius: 12,
+        border: `1px solid ${hovered && isOwner ? 'var(--wb-ocean)' : 'var(--wb-line)'}`,
+        background: 'white',
+        overflow: 'hidden',
+        cursor: isOwner ? 'grab' : 'default',
+        boxShadow: hovered && isOwner ? 'var(--wb-shadow-md)' : 'var(--wb-shadow-sm)',
+        transition: 'box-shadow var(--wb-fast), border-color var(--wb-fast)',
+      }}
     >
       {/* Photo */}
       {item.photoUrl && (
-        <div className="h-24 overflow-hidden">
+        <div style={{ height: 84, overflow: 'hidden' }}>
           <img
             src={item.photoUrl}
             alt={item.name}
-            className="w-full h-full object-cover"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             loading="lazy"
           />
         </div>
       )}
 
       {/* Info */}
-      <div className="px-3 py-2.5">
-        <p className="text-xs font-semibold text-gray-900 truncate">{item.name}</p>
-        <p className="text-[10px] text-gray-500 truncate mt-0.5">{item.address}</p>
+      <div style={{ padding: '10px 12px 12px' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--wb-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.name}
+        </p>
+        <p style={{ fontSize: 10, color: 'var(--wb-ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+          {item.address}
+        </p>
         {item.rating > 0 && (
-          <p className="text-[10px] text-amber-500 mt-1">
-            {'★'.repeat(stars)}{'☆'.repeat(5 - stars)} {item.rating.toFixed(1)}
+          <p style={{ fontSize: 10, color: 'var(--wb-sun)', marginTop: 4 }}>
+            {'★'.repeat(stars)}{'☆'.repeat(5 - stars)}{' '}{item.rating.toFixed(1)}
+          </p>
+        )}
+        {item.durationMinutes && (
+          <p style={{ fontSize: 10, color: 'var(--wb-ink-soft)', marginTop: 2 }}>
+            {formatDuration(item.durationMinutes)}
           </p>
         )}
         {isOwner && (
-          <p className="text-[9px] text-indigo-400 mt-1.5 font-medium uppercase tracking-wide">
+          <p style={{ fontSize: 9, color: 'var(--wb-ocean)', marginTop: 6, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
             drag to add →
           </p>
         )}
       </div>
     </div>
   );
+}
+
+function formatDuration(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
 }

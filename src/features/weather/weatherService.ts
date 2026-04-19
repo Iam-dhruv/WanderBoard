@@ -48,6 +48,7 @@ export async function fetchWeatherData(
     }
 
     const json = await res.json() as {
+      city?: { name: string };
       list: Array<{
         dt: number;
         main: { temp: number; feels_like: number; humidity: number };

@@ -8,9 +8,16 @@ interface DiscoveryListProps {
   hasSearched: boolean;
   tripStartDate?: string;
   tripEndDate?: string;
+  selectedPlaceId?: string | null;
+  hoveredPlaceId?: string | null;
+  onHoverChange?: (placeId: string | null) => void;
+  onCardClick?: (placeId: string) => void;
 }
 
-export function DiscoveryList({ tripId, places, isLoading, hasSearched, tripStartDate, tripEndDate }: DiscoveryListProps) {
+export function DiscoveryList({
+  tripId, places, isLoading, hasSearched, tripStartDate, tripEndDate,
+  selectedPlaceId, hoveredPlaceId, onHoverChange, onCardClick,
+}: DiscoveryListProps) {
   if (isLoading) {
     return (
       <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center text-sm text-gray-500 shadow-sm">
@@ -40,6 +47,10 @@ export function DiscoveryList({ tripId, places, isLoading, hasSearched, tripStar
           place={place}
           tripStartDate={tripStartDate}
           tripEndDate={tripEndDate}
+          isSelected={selectedPlaceId === place.placeId}
+          isHovered={hoveredPlaceId === place.placeId}
+          onHoverChange={(hovered) => onHoverChange?.(hovered ? place.placeId : null)}
+          onCardClick={() => onCardClick?.(place.placeId)}
         />
       ))}
     </div>

@@ -4,6 +4,7 @@ export interface Place {
   address: string;
   photoUrl: string;
   placeId: string;
+  types?: string[];
   location?: {
     lat: number;
     lng: number;

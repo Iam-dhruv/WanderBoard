@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
@@ -9,6 +9,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DraggableAttributes,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -28,6 +29,9 @@ import {
 } from '@/features/discovery/services/bucketService';
 import type { AppUser, BucketListComment, BucketListItem, VoteValue } from '@/types';
 import { useTripStore } from './useTripStore';
+import { useTripMap } from './TripMapContext';
+import { collection, onSnapshot, query } from 'firebase/firestore';
+import { db } from '@/config/firebase';
 // ── NEW: MiniWeatherCard from the canonical weather feature ──────────────────
 import { MiniWeatherCard } from '@/features/weather/MiniWeatherCard';
 
@@ -36,11 +40,27 @@ const FALLBACK_CARD_IMAGE = 'https://images.unsplash.com/photo-1526772662000-3f8
 export function TripBucketListPage() {
   const { activeTrip } = useTripStore();
   const { user } = useAuth();
+  const { setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId } = useTripMap();
   const [items, setItems] = useState<BucketListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<BucketListSortMode>('score');
+  const [scheduledBucketIds, setScheduledBucketIds] = useState<Set<string>>(new Set());
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  // Track which bucket items have been scheduled in the timeline
+  useEffect(() => {
+    if (!activeTrip) return;
+    const q = query(collection(db, 'trips', activeTrip.id, 'timeline'));
+    return onSnapshot(q, (snap) => {
+      const ids = new Set(
+        snap.docs
+          .map((d) => d.data().bucketItemId as string | null)
+          .filter((id): id is string => Boolean(id)),
+      );
+      setScheduledBucketIds(ids);
+    });
+  }, [activeTrip]);
 
   useEffect(() => {
     if (!activeTrip) return;
@@ -65,6 +85,54 @@ export function TripBucketListPage() {
       unsubscribe();
     };
   }, [activeTrip, sortMode]);
+
+  useEffect(() => {
+    if (!activeTrip) {
+      setMapMarkers([]);
+      setRenderInfoWindow(null);
+      setSelectedMarkerId(null);
+      setHoveredMarkerId(null);
+      return;
+    }
+
+    const markers = items
+      .filter((item) => item.location)
+      .map((item) => {
+        const isScheduled = scheduledBucketIds.has(item.id);
+        return {
+          id:       item.id,
+          position: { lat: item.location!.lat, lng: item.location!.lng },
+          title:    isScheduled ? `${item.name} ✓` : item.name,
+          color:    isScheduled ? '#6B8F3E' : '#2563eb', // wb-moss when scheduled
+        };
+      });
+
+    setMapMarkers(markers);
+
+    const renderer = (id: string): ReactNode => {
+      const item = items.find((candidate) => candidate.id === id);
+      if (!item) {
+        return null;
+      }
+
+      return (
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-gray-900">{item.name}</p>
+          <p className="text-xs text-gray-500">{item.address}</p>
+          <p className="text-xs text-gray-400">Added by {item.addedByName}</p>
+        </div>
+      );
+    };
+
+    setRenderInfoWindow(renderer);
+
+    return () => {
+      setMapMarkers([]);
+      setRenderInfoWindow(null);
+      setSelectedMarkerId(null);
+      setHoveredMarkerId(null);
+    };
+  }, [items, activeTrip, scheduledBucketIds, setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId]);
 
   // NOTE: refreshBucketItemWeather removed — MiniWeatherCard handles its own fetching
   // from the canonical weather feature, so no duplicate API calls via the legacy service.
@@ -267,7 +335,7 @@ function BucketListCard({
   currentUser: AppUser | null;
   showDragHandle?: boolean;
   dragHandleProps?: Record<string, unknown>;
-  dragHandleAttributes?: Record<string, unknown>;
+  dragHandleAttributes?: DraggableAttributes;
 }) {
   const [hasImageError, setHasImageError] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
@@ -279,7 +347,6 @@ function BucketListCard({
   const currentUserId = currentUser?.uid ?? null;
   const currentVote: VoteValue = currentUserId ? (item.votesByUser[currentUserId] ?? 0) : 0;
   const canDelete = Boolean(currentUserId && (isOwner || item.addedById === currentUserId));
-  const title = item.userData?.customTitle?.trim() || item.name;
   const proposedLabel = item.userData?.proposedTime ? formatDateTime(item.userData.proposedTime) : null;
 
   const handleVote = async (direction: 'up' | 'down') => {
@@ -342,7 +409,7 @@ function BucketListCard({
                 </button>
               )}
               <div className="space-y-1">
-                <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+                <h3 className="text-lg font-semibold text-gray-900">{item.name}</h3>
                 <p className="text-sm text-gray-500">{item.address}</p>
               </div>
             </div>
@@ -400,11 +467,6 @@ function BucketListCard({
                   {item.userData.activityType}
                 </span>
               )}
-              {item.userData.priority && (
-                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
-                  Priority {item.userData.priority}
-                </span>
-              )}
               {typeof item.userData.durationMinutes === 'number' && (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
                   {item.userData.durationMinutes} min
@@ -415,11 +477,6 @@ function BucketListCard({
                   {proposedLabel}
                 </span>
               )}
-              {item.userData.tags?.map((tag) => (
-                <span key={tag} className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
-                  #{tag}
-                </span>
-              ))}
             </div>
           )}
 

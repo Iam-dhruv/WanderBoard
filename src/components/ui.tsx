@@ -2,45 +2,51 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 interface ModalProps {
-	title: string;
-	isOpen: boolean;
-	onClose: () => void;
-	children: ReactNode;
+  title?: string;
+  isOpen: boolean;
+  onClose: () => void;
+  children: ReactNode;
+  maxWidth?: string;
 }
 
-export function Modal({ title, isOpen, onClose, children }: ModalProps) {
-	if (!isOpen) {
-		return null;
-	}
+export function Modal({ title, isOpen, onClose, children, maxWidth = 'max-w-[520px]' }: ModalProps) {
+  if (!isOpen) return null;
+  if (typeof document === 'undefined') return null;
 
-	if (typeof document === 'undefined') {
-		return null;
-	}
-
-	return createPortal(
-		<div
-			className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 py-6"
-			onClick={onClose}
-		>
-			<div
-				className="w-full max-w-2xl rounded-2xl bg-white shadow-xl"
-				onClick={(event) => event.stopPropagation()}
-			>
-				<div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-					<h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-					<button
-						type="button"
-						onClick={onClose}
-						className="rounded-full border border-gray-200 px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-50"
-					>
-						Close
-					</button>
-				</div>
-				<div className="px-6 py-5">
-					{children}
-				</div>
-			</div>
-		</div>,
-		document.body,
-	);
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-5"
+      style={{ background: 'rgba(15,28,46,0.45)', backdropFilter: 'blur(6px)' }}
+      onClick={onClose}
+    >
+      <div
+        className={[
+          'relative w-full rounded-[20px] p-8',
+          'border-[1.5px] border-wb-ink',
+          maxWidth,
+        ].join(' ')}
+        style={{
+          background: 'var(--wb-paper)',
+          boxShadow: 'var(--wb-shadow-lg)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 w-9 h-9 rounded-full bg-white border border-wb-line flex items-center justify-center text-wb-ink font-bold text-lg hover:bg-wb-paper-2 transition-colors"
+          aria-label="Close"
+        >
+          ×
+        </button>
+        {title && (
+          <h2 className="font-fraunces text-[32px] font-bold tracking-tight text-wb-ink mb-4 leading-tight">
+            {title}
+          </h2>
+        )}
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
 }

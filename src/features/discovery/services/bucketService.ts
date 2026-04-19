@@ -129,7 +129,9 @@ function normalizeUserData(userData?: BucketListUserData): BucketListUserData | 
   }
 
   if (typeof userData.durationMinutes === 'number' && userData.durationMinutes > 0) {
-    normalized.durationMinutes = userData.durationMinutes;
+    // Round up to nearest 15-minute boundary; cap at 8 hours
+    const quantised = Math.ceil(userData.durationMinutes / 15) * 15;
+    normalized.durationMinutes = Math.min(480, quantised);
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;

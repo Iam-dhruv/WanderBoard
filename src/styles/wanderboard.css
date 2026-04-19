@@ -1,0 +1,316 @@
+/* ============================================================
+   WanderBoard Design Tokens
+   Extends lds.css with the wb-* palette, shadows, and motion.
+   Import this AFTER lds.css in index.css.
+   ============================================================ */
+
+:root {
+  /* ---- WanderBoard Palette ---- */
+  --wb-ink:        #0F1C2E;   /* near-navy: headlines, primary button bg */
+  --wb-ink-soft:   #2B3A52;   /* secondary text */
+  --wb-paper:      #FAF6EF;   /* warm canvas: app background */
+  --wb-paper-2:    #F3EDE0;   /* muted surfaces, input bg */
+  --wb-paper-3:    #EAE2D0;   /* subtle surfaces */
+  --wb-line:       #E6DDC9;   /* borders, dividers */
+
+  /* Accents */
+  --wb-sun:        #F5A524;   /* amber/sun: stamps, vote buttons */
+  --wb-sunset:     #E85D2F;   /* terracotta: owner badge, CTAs, italic text */
+  --wb-coral:      #FF6A5B;   /* secondary accent */
+  --wb-ocean:      #0E6BA8;   /* deep blue-sea: data viz */
+  --wb-sky:        #4FA3DF;   /* light accent */
+  --wb-forest:     #1F6B4A;   /* positive states */
+  --wb-moss:       #6B8F3E;   /* success, "owed" balance */
+  --wb-plum:       #6B3E7F;   /* alt accent */
+
+  /* ---- Shadows ---- */
+  --wb-shadow-sm:  0 1px 0 rgba(15,28,46,0.04), 0 2px 6px rgba(15,28,46,0.06);
+  --wb-shadow-md:  0 2px 0 rgba(15,28,46,0.05), 0 10px 24px -8px rgba(15,28,46,0.14);
+  --wb-shadow-lg:  0 4px 0 rgba(15,28,46,0.05), 0 30px 50px -20px rgba(15,28,46,0.28);
+
+  /* ---- Density (default: cozy) ---- */
+  --den-pad:       20px;
+  --den-gap:       16px;
+  --den-card-h:    300px;
+
+  /* ---- Motion (matches LDS) ---- */
+  --wb-fast:       120ms;
+  --wb-base:       180ms;
+  --wb-slow:       240ms;
+  --wb-ease:       cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ---- Theme: Ocean (default) ---- */
+[data-theme="ocean"] {
+  --wb-primary:      var(--wb-ocean);
+  --wb-primary-soft: #DCEAF4;
+  --wb-accent:       var(--wb-sky);
+}
+[data-theme="sunset"] {
+  --wb-primary:      var(--wb-sunset);
+  --wb-primary-soft: #FDEADF;
+  --wb-accent:       var(--wb-sun);
+}
+[data-theme="forest"] {
+  --wb-primary:      var(--wb-forest);
+  --wb-primary-soft: #DEEADF;
+  --wb-accent:       var(--wb-moss);
+}
+[data-theme="plum"] {
+  --wb-primary:      var(--wb-plum);
+  --wb-primary-soft: #ECDFF2;
+  --wb-accent:       var(--wb-coral);
+}
+
+/* ---- Global surface ---- */
+body {
+  background: var(--wb-paper);
+  color: var(--wb-ink);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ---- Fraunces serif helper ---- */
+.wb-serif {
+  font-family: 'Fraunces', serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+}
+.wb-serif-italic {
+  font-style: italic;
+}
+.wb-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ---- Sticker: the signature offset-shadow pill ---- */
+.wb-sticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1.5px solid var(--wb-ink);
+  color: var(--wb-ink);
+  box-shadow: 2px 2px 0 var(--wb-ink);
+  transform: rotate(-2deg);
+  white-space: nowrap;
+  user-select: none;
+}
+.wb-sticker.rot-r  { transform: rotate(2deg); }
+.wb-sticker.rot-0  { transform: rotate(0deg); }
+.wb-sticker.sun    { background: var(--wb-sun); }
+.wb-sticker.coral  { background: var(--wb-coral);  color: #fff; }
+.wb-sticker.sky    { background: var(--wb-sky);    color: #fff; }
+.wb-sticker.moss   { background: var(--wb-moss);   color: #fff; }
+.wb-sticker.plum   { background: var(--wb-plum);   color: #fff; }
+.wb-sticker.ocean  { background: var(--wb-ocean);  color: #fff; }
+
+/* ---- Buttons ---- */
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 10px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    transform var(--wb-fast) var(--wb-ease),
+    box-shadow var(--wb-fast) var(--wb-ease);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.wb-btn:hover { transform: translateY(-1px); }
+
+.wb-btn-primary {
+  background: var(--wb-ink);
+  color: #fff;
+  box-shadow: 3px 3px 0 var(--wb-sun);
+}
+.wb-btn-primary:hover { box-shadow: 5px 5px 0 var(--wb-sun); }
+
+.wb-btn-ghost {
+  background: #fff;
+  color: var(--wb-ink);
+  border-color: var(--wb-line);
+}
+.wb-btn-ghost:hover { border-color: var(--wb-ink); }
+
+.wb-btn-accent {
+  background: var(--wb-sunset);
+  color: #fff;
+  box-shadow: 3px 3px 0 var(--wb-ink);
+}
+.wb-btn-accent:hover { box-shadow: 5px 5px 0 var(--wb-ink); }
+
+.wb-btn-sm  { padding: 7px 12px; font-size: 13px; border-radius: 8px; }
+.wb-btn-lg  { padding: 14px 22px; font-size: 16px; border-radius: 12px; }
+
+/* ---- Focus ring ---- */
+.wb-focus:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(245, 165, 36, 0.28);
+}
+
+/* ---- Card surfaces ---- */
+.wb-card {
+  background: #fff;
+  border: 1px solid var(--wb-line);
+  border-radius: 16px;
+  box-shadow: var(--wb-shadow-sm);
+}
+.wb-card-paper {
+  background: var(--wb-paper-2);
+  border: 1px solid var(--wb-line);
+  border-radius: 16px;
+}
+
+/* ---- Input fields ---- */
+.wb-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid var(--wb-line);
+  border-radius: 10px;
+  background: var(--wb-paper-2);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--wb-ink);
+  transition:
+    border-color var(--wb-fast) var(--wb-ease),
+    background var(--wb-fast) var(--wb-ease);
+}
+.wb-input:focus {
+  outline: none;
+  border-color: var(--wb-ink);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(245, 165, 36, 0.25);
+}
+.wb-input::placeholder { color: var(--wb-ink-soft); opacity: 0.6; }
+
+/* ---- Segmented control ---- */
+.wb-seg {
+  display: inline-flex;
+  gap: 2px;
+  background: #fff;
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  padding: 3px;
+}
+.wb-seg-btn {
+  border: none;
+  background: transparent;
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--wb-ink-soft);
+  transition: background var(--wb-fast) var(--wb-ease), color var(--wb-fast) var(--wb-ease);
+}
+.wb-seg-btn.active,
+.wb-seg-btn[aria-selected="true"] {
+  background: var(--wb-ink);
+  color: #fff;
+}
+
+/* ---- Trip card hover animation ---- */
+.wb-trip-card {
+  transition: transform var(--wb-fast) var(--wb-ease), box-shadow var(--wb-fast) var(--wb-ease);
+}
+.wb-trip-card:hover {
+  transform: translateY(-3px) rotate(-0.3deg);
+  box-shadow: var(--wb-shadow-md);
+}
+
+/* ---- Glass chip (used in hero card meta row) ---- */
+.wb-glass-chip {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Progress bar ---- */
+.wb-progress-track {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  height: 6px;
+  overflow: hidden;
+}
+.wb-progress-fill {
+  height: 100%;
+  background: var(--wb-sun);
+  border-radius: 999px;
+}
+
+/* ---- Balance bar (expenses) ---- */
+.wb-balance-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--wb-paper-2);
+}
+
+/* ---- Slot row (timeline) ---- */
+.wb-slot {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--wb-line);
+  align-items: center;
+}
+.wb-slot:first-child { border-top: none; padding-top: 4px; }
+
+/* ---- Vote button ---- */
+.wb-vote-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 2px solid var(--wb-ink);
+  background: var(--wb-sun);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--wb-ink);
+  font-family: inherit;
+  font-weight: 800;
+  color: var(--wb-ink);
+  font-size: 18px;
+  transition: transform var(--wb-fast) var(--wb-ease), box-shadow var(--wb-fast) var(--wb-ease);
+}
+.wb-vote-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--wb-ink);
+}
+.wb-vote-btn.pressed {
+  background: var(--wb-ink);
+  color: #fff;
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--wb-ink);
+}
+
+/* ---- Paper texture overlay ---- */
+.wb-paper-tex {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(232,93,47,0.05), transparent 40%),
+    radial-gradient(circle at 80% 60%, rgba(14,107,168,0.05), transparent 45%);
+}

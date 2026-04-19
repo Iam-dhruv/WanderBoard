@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { BucketListPriority, BucketListUserData, Result } from '@/types';
+import type { BucketListUserData, Result } from '@/types';
 import type { Place } from '@/features/discovery/types';
 import { Modal } from '@/components/ui';
 
@@ -12,6 +12,18 @@ const ACTIVITY_TYPES = [
   'Relaxation',
 ];
 
+const DURATION_MIN  = 15;
+const DURATION_MAX  = 480;
+const DURATION_STEP = 15;
+
+function formatDuration(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
 interface AddToBucketModalProps {
   isOpen: boolean;
   place: Place;
@@ -22,27 +34,21 @@ interface AddToBucketModalProps {
 }
 
 export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onSubmit }: AddToBucketModalProps) {
-  const [customTitle, setCustomTitle] = useState('');
   const [notes, setNotes] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [activityType, setActivityType] = useState('');
-  const [priority, setPriority] = useState<BucketListPriority | ''>('');
-  const [tags, setTags] = useState('');
-  const [durationMinutes, setDurationMinutes] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState(60);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
-    setCustomTitle('');
     setNotes('');
     setDate('');
     setTime('');
     setActivityType('');
-    setPriority('');
-    setTags('');
-    setDurationMinutes('');
+    setDurationMinutes(60);
     setError(null);
   }, [isOpen]);
 
@@ -54,19 +60,6 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
     }
     return combined.toISOString();
   }, [date, time]);
-
-  const parsedDuration = useMemo(() => {
-    const value = Number(durationMinutes);
-    return Number.isFinite(value) && value > 0 ? value : undefined;
-  }, [durationMinutes]);
-
-  const parsedTags = useMemo(
-    () => tags
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter(Boolean),
-    [tags],
-  );
 
   const handleSubmit = async () => {
     if (isSubmitting) return;
@@ -92,13 +85,10 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
 
     try {
       const result = await onSubmit({
-        customTitle: customTitle.trim() || undefined,
         notes: notes.trim() || undefined,
         proposedTime,
         activityType: activityType || undefined,
-        priority: priority || undefined,
-        tags: parsedTags.length > 0 ? parsedTags : undefined,
-        durationMinutes: parsedDuration,
+        durationMinutes,
       });
 
       if (result.ok) {
@@ -123,15 +113,6 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Custom title">
-            <input
-              type="text"
-              value={customTitle}
-              onChange={(event) => setCustomTitle(event.target.value)}
-              placeholder="Optional nickname"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            />
-          </Field>
           <Field label="Activity type">
             <select
               value={activityType}
@@ -162,39 +143,29 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
             />
           </Field>
-          <Field label="Priority">
-            <select
-              value={priority}
-              onChange={(event) => setPriority(event.target.value as BucketListPriority | '')}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            >
-              <option value="">Optional</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </Field>
-          <Field label="Estimated duration (minutes)">
-            <input
-              type="number"
-              min={0}
-              value={durationMinutes}
-              onChange={(event) => setDurationMinutes(event.target.value)}
-              placeholder="e.g. 90"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            />
+          <Field label="Estimated duration">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setDurationMinutes((d) => Math.max(DURATION_MIN, d - DURATION_STEP))}
+                  disabled={durationMinutes <= DURATION_MIN}
+                  className="w-9 h-9 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >−</button>
+                <span className="w-12 text-center text-sm font-semibold text-gray-900 border-x border-gray-200 py-2">
+                  {durationMinutes}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDurationMinutes((d) => Math.min(DURATION_MAX, d + DURATION_STEP))}
+                  disabled={durationMinutes >= DURATION_MAX}
+                  className="w-9 h-9 flex items-center justify-center text-lg font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >+</button>
+              </div>
+              <span className="text-sm text-gray-500">{formatDuration(durationMinutes)}</span>
+            </div>
           </Field>
         </div>
-
-        <Field label="Tags">
-          <input
-            type="text"
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-            placeholder="Comma separated"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-          />
-        </Field>
 
         <Field label="Notes">
           <textarea
