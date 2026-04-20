@@ -1,15 +1,17 @@
 import { createContext, useContext, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { NavLink, Outlet, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
+import { useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
-import type { Trip, TripMember } from '@/types';
-import { getTrip, getTripMembers } from './tripService';
+import type { Trip, TripDestinationCity, TripMember } from '@/types';
+import { appendTripDestinationCity, getTrip, getTripMembers, setSelectedDestinationCity } from './tripService';
 import { useTripStore } from './useTripStore';
 import { useWeatherStore } from '@/features/weather';
 import { getCoordinatesFromCity, type Coordinates } from '@/features/weather/geocodingService';
 import { Avatar } from '@/components/Avatar';
 import { MapView } from '@/components/MapView';
 import { TripMapProvider, useTripMap } from './TripMapContext';
+import { WorkspaceFeaturePanel } from './WorkspaceFeaturePanel';
+import { useWorkspacePanelStore, type WorkspacePanelKey } from './useWorkspacePanelStore';
 
 // ─── Geocoding context (destination lat/lon for weather + initial map centre) ──
 
@@ -26,16 +28,91 @@ export function useTripGeo(): TripGeoContextValue {
   return useContext(TripGeoContext);
 }
 
-// ─── Workspace tabs config ─────────────────────────────────────────────────────
+function normalizeCityName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim();
+}
 
-const TABS = (tripId: string) => [
-  { label: 'Plan',        to: ROUTES.tripPlanning(tripId) },
-  { label: 'Timeline',    to: ROUTES.tripTimeline(tripId) },
-  { label: 'Bucket list', to: ROUTES.tripBucketList(tripId) },
-  { label: 'Discover',    to: ROUTES.tripDiscovery(tripId) },
-  { label: 'Forecast',    to: ROUTES.tripWeather(tripId) },
-  { label: 'Expenses',    to: ROUTES.tripExpenses(tripId) },
+function parseDestinationCities(destination: string): string[] {
+  return destination
+    .split(';')
+    .map(normalizeCityName)
+    .filter(Boolean);
+}
+
+function mergeTripCities(trip: Trip): TripDestinationCity[] {
+  const byName = new Map<string, TripDestinationCity>();
+  const names = parseDestinationCities(trip.destination);
+
+  for (const city of trip.destinationCities ?? []) {
+    const normalizedName = normalizeCityName(city.name);
+    if (!normalizedName) continue;
+    byName.set(normalizedName.toLowerCase(), {
+      ...city,
+      name: normalizedName,
+    });
+  }
+
+  names.forEach((name, index) => {
+    const key = name.toLowerCase();
+    const existing = byName.get(key);
+    if (existing) {
+      if (index === 0) {
+        existing.location = existing.location ?? trip.destinationLocation;
+        existing.placeId = existing.placeId ?? trip.destinationPlaceId;
+      }
+      return;
+    }
+    byName.set(key, {
+      name,
+      location: index === 0 ? trip.destinationLocation : undefined,
+      placeId: index === 0 ? trip.destinationPlaceId : undefined,
+    });
+  });
+
+  if (names.length > 0) {
+    return names.map((name, index) => {
+      const city = byName.get(name.toLowerCase()) ?? { name };
+      if (index === 0) {
+        return {
+          ...city,
+          location: city.location ?? trip.destinationLocation,
+          placeId: city.placeId ?? trip.destinationPlaceId,
+        };
+      }
+      return city;
+    });
+  }
+
+  return Array.from(byName.values());
+}
+
+const PANEL_CONFIG: Array<{
+  key: WorkspacePanelKey;
+  label: string;
+  icon: string;
+  route: (tripId: string) => string;
+}> = [
+  { key: 'planning', icon: 'P', label: 'Planning', route: ROUTES.tripPlanning },
+  { key: 'timeline', icon: 'T', label: 'Timeline', route: ROUTES.tripTimeline },
+  { key: 'bucket-list', icon: 'B', label: 'Bucket list', route: ROUTES.tripBucketList },
+  { key: 'discovery', icon: 'D', label: 'Discover', route: ROUTES.tripDiscovery },
+  { key: 'weather', icon: 'F', label: 'Forecast', route: ROUTES.tripWeather },
+  { key: 'expenses', icon: 'E', label: 'Expenses', route: ROUTES.tripExpenses },
 ];
+
+function panelKeyFromPath(pathname: string): WorkspacePanelKey {
+  if (pathname.includes('/timeline')) return 'timeline';
+  if (pathname.includes('/bucket-list')) return 'bucket-list';
+  if (pathname.includes('/discovery')) return 'discovery';
+  if (pathname.includes('/weather')) return 'weather';
+  if (pathname.includes('/expenses')) return 'expenses';
+  return 'planning';
+}
+
+function routeForPanelKey(tripId: string, key: WorkspacePanelKey): string {
+  const panel = PANEL_CONFIG.find((entry) => entry.key === key);
+  return (panel ?? PANEL_CONFIG[0]).route(tripId);
+}
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -141,20 +218,58 @@ function WorkspaceShell({
   user: ReturnType<typeof useAuth>['user'];
 }) {
   const location = useLocation();
-  const isDiscovery = location.pathname.includes('/discovery');
-  const isTimeline = location.pathname.includes('/timeline');
-  const isForecast = location.pathname.includes('/weather');
-  const hasCustomPanelHeader = isDiscovery || isTimeline || isForecast;
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => Math.floor(window.innerWidth * 0.5));
-  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+  const navigate = useNavigate();
+  const {
+    openPanels,
+    activePanelKey,
+    setFromRoute,
+    togglePanel,
+    focusPanel,
+    closePanel,
+    closeAll,
+    resizePanel,
+  } = useWorkspacePanelStore((s) => ({
+    openPanels: s.openPanels,
+    activePanelKey: s.activePanelKey,
+    setFromRoute: s.setFromRoute,
+    togglePanel: s.togglePanel,
+    focusPanel: s.focusPanel,
+    closePanel: s.closePanel,
+    closeAll: s.closeAll,
+    resizePanel: s.resizePanel,
+  }));
+
   const [mapReadyTick, setMapReadyTick] = useState(0);
   const [recenterTrigger, setRecenterTrigger] = useState(0);
   const [isOffHomeCenter, setIsOffHomeCenter] = useState(false);
+  const [selectedCityName, setSelectedCityName] = useState('');
+  const [selectedCityCenter, setSelectedCityCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [resolvedCityCenters, setResolvedCityCenters] = useState<Record<string, { lat: number; lng: number }>>({});
 
-  const homeCenter = useMemo(
+  const { setActiveSelectedDestinationCity, upsertActiveDestinationCity, patchActiveTrip } = useTripStore((s) => ({
+    setActiveSelectedDestinationCity: s.setActiveSelectedDestinationCity,
+    upsertActiveDestinationCity: s.upsertActiveDestinationCity,
+    patchActiveTrip: s.patchActiveTrip,
+  }));
+
+  const tripCities = useMemo(() => mergeTripCities(activeTrip), [activeTrip]);
+  const routePanelKey = useMemo(() => panelKeyFromPath(location.pathname), [location.pathname]);
+  const hasDiscoveryPanel = useMemo(
+    () => openPanels.some((panel) => panel.key === 'discovery'),
+    [openPanels],
+  );
+
+  useEffect(() => {
+    if (openPanels.length === 0) return;
+    setFromRoute(routePanelKey);
+  }, [routePanelKey, setFromRoute, openPanels.length]);
+
+  const fallbackHomeCenter = useMemo(
     () => (geo.status === 'ready' ? { lat: geo.coords.lat, lng: geo.coords.lon } : null),
     [geo.status, geo.status === 'ready' ? geo.coords.lat : null, geo.status === 'ready' ? geo.coords.lon : null],
   );
+
+  const homeCenter = selectedCityCenter ?? fallbackHomeCenter;
 
   const {
     mapRef, mapMarkers, selectedMarkerId, hoveredMarkerId, renderInfoWindow,
@@ -213,19 +328,98 @@ function WorkspaceShell({
     setIsOffHomeCenter(false);
   }, [homeCenter]);
 
+  useEffect(() => {
+    if (tripCities.length === 0) {
+      setSelectedCityName('');
+      setSelectedCityCenter(null);
+      return;
+    }
+
+    const fromTrip = normalizeCityName(activeTrip.selectedDestinationCity ?? '');
+    const hasFromTrip = tripCities.some((city) => city.name.toLowerCase() === fromTrip.toLowerCase());
+    const next = hasFromTrip ? fromTrip : tripCities[0].name;
+
+    setSelectedCityName((prev) => {
+      const hasPrev = tripCities.some((city) => city.name.toLowerCase() === normalizeCityName(prev).toLowerCase());
+      return hasPrev ? prev : next;
+    });
+  }, [tripCities, activeTrip.selectedDestinationCity]);
+
+  useEffect(() => {
+    if (!selectedCityName) {
+      setSelectedCityCenter(null);
+      return;
+    }
+
+    const normalized = normalizeCityName(selectedCityName);
+    const city = tripCities.find((c) => c.name.toLowerCase() === normalized.toLowerCase());
+    if (!city) return;
+
+    if (city.location) {
+      setSelectedCityCenter({ lat: city.location.lat, lng: city.location.lng });
+      return;
+    }
+
+    const cached = resolvedCityCenters[normalized.toLowerCase()];
+    if (cached) {
+      setSelectedCityCenter(cached);
+      return;
+    }
+
+    let cancelled = false;
+    getCoordinatesFromCity(normalized, { placeId: city.placeId }).then(async (result) => {
+      if (cancelled || !result.ok) return;
+
+      const next = { lat: result.data.lat, lng: result.data.lon };
+      setResolvedCityCenters((prev) => ({ ...prev, [normalized.toLowerCase()]: next }));
+      setSelectedCityCenter(next);
+      upsertActiveDestinationCity({ name: normalized, placeId: city.placeId, location: next });
+
+      const appendResult = await appendTripDestinationCity(activeTrip.id, {
+        name: normalized,
+        placeId: city.placeId,
+        location: next,
+      });
+      if (appendResult.ok) {
+        patchActiveTrip({
+          destination: appendResult.data.destination,
+          destinationCities: appendResult.data.destinationCities,
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCityName, tripCities, resolvedCityCenters, upsertActiveDestinationCity, activeTrip.id, patchActiveTrip]);
+
+  function handleSelectCity(cityName: string) {
+    const normalized = normalizeCityName(cityName);
+    if (!normalized || normalized === selectedCityName) return;
+
+    setSelectedCityName(normalized);
+    setActiveSelectedDestinationCity(normalized);
+
+    void setSelectedDestinationCity(activeTrip.id, normalized).then((result) => {
+      if (!result.ok) return;
+      patchActiveTrip({
+        selectedDestinationCity: result.data.selectedDestinationCity,
+      });
+    });
+  }
+
   function handleMarkerClick(id: string) {
     setSelectedMarkerId(selectedMarkerId === id ? null : id);
   }
 
-  function startRightPanelResize(event: ReactMouseEvent<HTMLDivElement>) {
+  function startPanelResize(event: ReactMouseEvent<HTMLDivElement>, panelKey: WorkspacePanelKey, initialWidth: number) {
     event.preventDefault();
 
-    const minWidth = 320;
+    const startX = event.clientX;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      const maxWidth = Math.floor(window.innerWidth * 0.5);
-      const nextWidth = window.innerWidth - moveEvent.clientX;
-      setRightPanelWidth(Math.max(minWidth, Math.min(maxWidth, nextWidth)));
+      const delta = startX - moveEvent.clientX;
+      resizePanel(panelKey, initialWidth + delta);
     };
 
     const handleMouseUp = () => {
@@ -235,6 +429,38 @@ function WorkspaceShell({
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  function handleToggleFeaturePanel(key: WorkspacePanelKey) {
+    const isOpen = openPanels.some((panel) => panel.key === key);
+
+    if (isOpen) {
+      closePanel(key);
+      const remaining = openPanels.filter((panel) => panel.key !== key);
+      const nextKey = activePanelKey === key ? (remaining[0]?.key ?? 'planning') : activePanelKey;
+      navigate(routeForPanelKey(activeTrip.id, nextKey));
+      return;
+    }
+
+    togglePanel(key);
+    navigate(routeForPanelKey(activeTrip.id, key));
+  }
+
+  function handleFocusPanel(key: WorkspacePanelKey) {
+    focusPanel(key);
+    navigate(routeForPanelKey(activeTrip.id, key));
+  }
+
+  function handleClosePanel(key: WorkspacePanelKey) {
+    closePanel(key);
+    const remaining = openPanels.filter((panel) => panel.key !== key);
+    const nextKey = activePanelKey === key ? (remaining[0]?.key ?? 'planning') : activePanelKey;
+    navigate(routeForPanelKey(activeTrip.id, nextKey));
+  }
+
+  function handleCloseAllPanels() {
+    closeAll();
+    navigate(routeForPanelKey(activeTrip.id, 'planning'));
   }
 
   return (
@@ -293,22 +519,21 @@ function WorkspaceShell({
               {isOwner ? "You're the owner" : 'You are a member'}
             </span>
           </p>
-        </div>
-
-        {/* Tab segmented control */}
-        <div className="ml-5 flex gap-1 p-1 rounded-[10px]" style={{ background: 'var(--wb-paper-2)' }}>
-          {TABS(activeTrip.id).map(({ label, to }) => (
-            <NavLink
-              key={label}
-              to={to}
-              className={({ isActive }) => [
-                'px-3 py-[7px] rounded-[7px] text-[13px] font-semibold transition-all duration-[120ms]',
-                isActive ? 'bg-white shadow-wb-sm text-wb-ink' : 'text-wb-ink-soft hover:text-wb-ink',
-              ].join(' ')}
-            >
-              {label}
-            </NavLink>
-          ))}
+          {tripCities.length > 0 && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--wb-ink-soft)' }}>City</span>
+              <select
+                value={selectedCityName || tripCities[0].name}
+                onChange={(event) => handleSelectCity(event.target.value)}
+                className="h-7 rounded-[8px] border-[1.5px] px-2.5 text-xs font-semibold outline-none"
+                style={{ borderColor: 'var(--wb-line)', background: '#fff', color: 'var(--wb-ink)' }}
+              >
+                {tripCities.map((city) => (
+                  <option key={city.name.toLowerCase()} value={city.name}>{city.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -319,10 +544,10 @@ function WorkspaceShell({
             </span>
           </div>
           <button
-            onClick={() => setIsRightPanelCollapsed((prev) => !prev)}
+            onClick={handleCloseAllPanels}
             className="wb-btn wb-btn-ghost wb-btn-sm"
           >
-            {isRightPanelCollapsed ? 'Show panel' : 'Hide panel'}
+            Close all panels
           </button>
           <button className="wb-btn wb-btn-ghost wb-btn-sm">Share</button>
           <button className="wb-btn wb-btn-accent wb-btn-sm">Publish itinerary</button>
@@ -334,15 +559,14 @@ function WorkspaceShell({
 
         {/* LEFT: Shared map canvas */}
         <div
-          className={[ 'relative overflow-hidden flex-1 min-w-0', !isRightPanelCollapsed ? 'border-r' : '' ].join(' ')}
+          className="relative overflow-hidden flex-1 min-w-0"
           style={{
-            borderColor: 'var(--wb-line)',
             background: 'radial-gradient(1200px 700px at 30% 30%, #DDEAF3, transparent 60%), radial-gradient(900px 500px at 70% 80%, #FAEFD9, transparent 60%), #EEE4CC',
           }}
         >
           <MapView
             center={homeCenter ?? undefined}
-            zoom={isDiscovery ? 13 : 11}
+            zoom={hasDiscoveryPanel ? 13 : 11}
             recenterTrigger={recenterTrigger}
             markers={displayMarkers}
             selectedMarkerId={selectedMarkerId ?? undefined}
@@ -364,7 +588,7 @@ function WorkspaceShell({
                 <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
               </svg>
-              {isDiscovery ? 'Discover' : 'Route view'}
+              {hasDiscoveryPanel ? 'Discover' : 'Route view'}
             </div>
             <div
               className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-xs font-semibold"
@@ -373,7 +597,7 @@ function WorkspaceShell({
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
               </svg>
-              {activeTrip.destination}
+              {selectedCityName || activeTrip.destination}
             </div>
           </div>
 
@@ -397,7 +621,7 @@ function WorkspaceShell({
                 onClick={() => {
                   if (!homeCenter) return;
                   mapRef.current?.panTo(homeCenter);
-                  mapRef.current?.setZoom(isDiscovery ? 13 : 11);
+                  mapRef.current?.setZoom(hasDiscoveryPanel ? 13 : 11);
                 }}
                 className="w-9 h-9 bg-white flex items-center justify-center text-sm font-bold border-t hover:bg-wb-paper-2 transition-colors"
                 style={{
@@ -412,15 +636,16 @@ function WorkspaceShell({
             )}
           </div>
 
-          {isRightPanelCollapsed && (
-            <button
-              onClick={() => setIsRightPanelCollapsed(false)}
-              className="absolute right-4 top-20 z-10 rounded-[10px] px-3 py-2 text-xs font-semibold"
-              style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)', color: 'var(--wb-ink)' }}
-            >
-              Show panel
-            </button>
+          {openPanels.length === 0 && (
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20">
+              <FeatureIconRail
+                openPanels={openPanels}
+                activePanelKey={activePanelKey}
+                onToggle={handleToggleFeaturePanel}
+              />
+            </div>
           )}
+
           {/* Members panel */}
           <div
             className="absolute bottom-4 left-4 z-10 rounded-[14px] p-3 w-[220px]"
@@ -443,58 +668,116 @@ function WorkspaceShell({
           </div>
         </div>
 
-        {!isRightPanelCollapsed && (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onMouseDown={startRightPanelResize}
-            className="w-2 cursor-col-resize flex-shrink-0"
-            style={{ background: 'var(--wb-paper-2)', borderLeft: '1px solid var(--wb-line)', borderRight: '1px solid var(--wb-line)' }}
-          />
-        )}
-
-        {/* RIGHT: feature panel */}
-        {!isRightPanelCollapsed && (
-        <div
-          className="flex flex-col overflow-hidden flex-shrink-0"
-          style={{ background: 'var(--wb-paper)', width: rightPanelWidth, maxWidth: '50vw' }}
-        >
-          {/* Header — hidden for Discovery (it renders its own) */}
-          {!hasCustomPanelHeader && (
-            <div className="px-6 pt-5 pb-3 flex-shrink-0" style={{ borderBottom: '1px solid var(--wb-line)' }}>
-              <div className="flex items-center justify-between">
-                <h2
-                  className="font-fraunces text-[28px] font-bold leading-tight tracking-tight"
-                  style={{ color: 'var(--wb-ink)' }}
-                >
-                  Day{' '}
-                  <em className="italic" style={{ color: 'var(--wb-sunset)', fontVariationSettings: '"SOFT" 100' }}>by</em>
-                  {' '}day
-                </h2>
-                <button
-                  className="wb-btn wb-btn-sm flex items-center gap-1.5"
-                  style={{ background: 'var(--wb-paper-2)', color: 'var(--wb-ink)', border: '1.5px solid var(--wb-line)' }}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                  </svg>
-                  Edit
-                </button>
-              </div>
-              <p className="text-[13px] mt-1" style={{ color: 'var(--wb-ink-soft)' }}>
-                Drag activities from the bucket list into slots. {isOwner ? 'You can reorder.' : 'Owner can reorder.'}
-              </p>
+        {openPanels.length > 0 && (
+          <div className="h-full flex flex-shrink-0" style={{ maxWidth: '80vw' }}>
+            <div className="h-full flex items-center px-2" style={{ background: 'var(--wb-paper-2)', borderLeft: '1px solid var(--wb-line)', borderRight: '1px solid var(--wb-line)' }}>
+              <FeatureIconRail
+                openPanels={openPanels}
+                activePanelKey={activePanelKey}
+                onToggle={handleToggleFeaturePanel}
+              />
             </div>
-          )}
 
-          {/* Scrollable content — Discovery manages its own scroll */}
-          <div className={hasCustomPanelHeader ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto'}>
-            <Outlet />
+            {openPanels.map((panel) => {
+              const panelMeta = PANEL_CONFIG.find((entry) => entry.key === panel.key)!;
+              const isActivePanel = activePanelKey === panel.key;
+              return (
+                <div key={panel.key} className="h-full flex flex-shrink-0">
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    onMouseDown={(event) => startPanelResize(event, panel.key, panel.width)}
+                    className="w-2 cursor-col-resize"
+                    style={{ background: 'var(--wb-paper-2)', borderLeft: '1px solid var(--wb-line)', borderRight: '1px solid var(--wb-line)' }}
+                  />
+
+                  <div
+                    className="h-full flex flex-col overflow-hidden"
+                    onMouseDown={() => handleFocusPanel(panel.key)}
+                    style={{
+                      width: panel.width,
+                      minWidth: 280,
+                      background: 'var(--wb-paper)',
+                      borderRight: '1px solid var(--wb-line)',
+                    }}
+                  >
+                    <div
+                      className="h-10 px-3 flex items-center justify-between"
+                      style={{
+                        borderBottom: '1px solid var(--wb-line)',
+                        background: isActivePanel ? '#fff' : 'var(--wb-paper-2)',
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-5 h-5 rounded-[6px] flex items-center justify-center text-[10px] font-extrabold"
+                          style={{ background: 'var(--wb-sun)', color: 'var(--wb-ink)' }}
+                        >
+                          {panelMeta.icon}
+                        </span>
+                        <span className="text-xs font-semibold" style={{ color: 'var(--wb-ink)' }}>
+                          {panelMeta.label}
+                        </span>
+                      </div>
+                      <button
+                        className="text-xs font-bold px-1.5 py-0.5 rounded hover:bg-white"
+                        style={{ color: 'var(--wb-ink-soft)' }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleClosePanel(panel.key);
+                        }}
+                        title={`Close ${panelMeta.label}`}
+                      >
+                        x
+                      </button>
+                    </div>
+
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <WorkspaceFeaturePanel panelKey={panel.key} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
         )}
 
       </div>
+    </div>
+  );
+}
+
+function FeatureIconRail({
+  openPanels,
+  activePanelKey,
+  onToggle,
+}: {
+  openPanels: Array<{ key: WorkspacePanelKey }>;
+  activePanelKey: WorkspacePanelKey;
+  onToggle: (key: WorkspacePanelKey) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {PANEL_CONFIG.map((panel) => {
+        const isOpen = openPanels.some((entry) => entry.key === panel.key);
+        const isActive = isOpen && activePanelKey === panel.key;
+        return (
+          <button
+            key={panel.key}
+            onClick={() => onToggle(panel.key)}
+            className="w-10 h-10 rounded-[10px] border-[1.5px] text-xs font-extrabold flex items-center justify-center transition-all"
+            style={{
+              borderColor: isActive ? 'var(--wb-ink)' : 'var(--wb-line)',
+              background: isOpen ? 'var(--wb-sun)' : '#fff',
+              color: 'var(--wb-ink)',
+              boxShadow: isActive ? 'var(--wb-shadow-sm)' : 'none',
+            }}
+            title={panel.label}
+          >
+            {panel.icon}
+          </button>
+        );
+      })}
     </div>
   );
 }

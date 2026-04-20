@@ -614,8 +614,16 @@ function CreateTripModal({ userId, onClose, onCreated }: {
       return;
     }
 
+    const destinationCitiesPayload = merged.map((city, index) => ({
+      name: city,
+      placeId: index === 0 ? destinationPlaceId : undefined,
+      location: index === 0 ? destinationLocation : undefined,
+    }));
+
     const result = await createTrip({
       name, destination: trimmedDestination,
+      destinationCities: destinationCitiesPayload,
+      selectedDestinationCity: destinationCitiesPayload[0]?.name,
       destinationLocation, destinationPlaceId, destinationPlaceName,
       currency, startDate, endDate,
       ownerId: userId.uid,

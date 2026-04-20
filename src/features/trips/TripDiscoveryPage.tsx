@@ -12,11 +12,30 @@ import { err, ok, type BucketListUserData } from '@/types';
 import { useTripStore } from './useTripStore';
 import { useTripMap } from './TripMapContext';
 import { useTripGeo } from './TripWorkspacePage';
+import { appendTripDestinationCity } from './tripService';
 
 const MAP_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
 const SEARCH_DEBOUNCE_MS = 350;
 const MIN_RADIUS_METERS  = 500;
 const MAX_RADIUS_METERS  = 50_000;
+
+function normalizeCityName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim();
+}
+
+function getCityLabelFromPlace(place: google.maps.places.PlaceResult): string {
+  const components = place.address_components ?? [];
+  const locality = components.find((component) => component.types.includes('locality'))?.long_name;
+  if (locality) return normalizeCityName(locality);
+
+  const adminArea = components.find((component) => component.types.includes('administrative_area_level_1'))?.long_name;
+  if (adminArea) return normalizeCityName(adminArea);
+
+  const formattedPrefix = place.formatted_address?.split(',')[0] ?? '';
+  if (formattedPrefix) return normalizeCityName(formattedPrefix);
+
+  return normalizeCityName(place.name ?? '');
+}
 
 function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
   if (!result.place_id || !result.name) return null;
@@ -142,7 +161,11 @@ function PlaceInfoCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function TripDiscoveryPage() {
-  const { activeTrip } = useTripStore();
+  const { activeTrip, upsertActiveDestinationCity, patchActiveTrip } = useTripStore((s) => ({
+    activeTrip: s.activeTrip,
+    upsertActiveDestinationCity: s.upsertActiveDestinationCity,
+    patchActiveTrip: s.patchActiveTrip,
+  }));
   const { geo }        = useTripGeo();
   const {
     mapRef, idleTick,
@@ -175,7 +198,7 @@ export function TripDiscoveryPage() {
 
     autocompleteRef.current = new window.google.maps.places.Autocomplete(
       autocompleteInputRef.current,
-      { fields: ['geometry', 'name'] },
+      { fields: ['geometry', 'name', 'place_id', 'formatted_address', 'address_components'] },
     );
 
     autocompleteRef.current.addListener('place_changed', () => {
@@ -184,6 +207,25 @@ export function TripDiscoveryPage() {
       const loc = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
       mapRef.current?.panTo(loc);
       mapRef.current?.setZoom(14);
+
+      const cityName = getCityLabelFromPlace(p);
+      if (!activeTrip || !cityName) return;
+
+      const cityPayload = {
+        name: cityName,
+        placeId: p.place_id,
+        location: loc,
+      };
+
+      upsertActiveDestinationCity(cityPayload);
+      void appendTripDestinationCity(activeTrip.id, cityPayload).then((result) => {
+        if (!result.ok) return;
+        patchActiveTrip({
+          destination: result.data.destination,
+          destinationCities: result.data.destinationCities,
+          selectedDestinationCity: result.data.selectedDestinationCity,
+        });
+      });
     });
 
     return () => {
@@ -191,7 +233,7 @@ export function TripDiscoveryPage() {
         window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
       }
     };
-  }, [isLoaded, mapRef]);
+  }, [isLoaded, mapRef, activeTrip, upsertActiveDestinationCity, patchActiveTrip]);
 
   // Scroll sidebar to card when a pin is selected
   useEffect(() => {
