@@ -8,7 +8,7 @@
 // (set by EventCard's dragStart). Bucket-item drags don't carry that type, so
 // they pass through to the calendar underneath instead of being swallowed here.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   collection,
   onSnapshot,
@@ -31,6 +31,7 @@ export interface BucketItem {
 interface BucketListSidebarProps {
   tripId: string;
   isOwner: boolean;
+  scheduledBucketIds?: Set<string>;
   onDragStart: (item: BucketItem) => void;
   onReturnEvent?: (eventId: string) => void;
 }
@@ -38,6 +39,7 @@ interface BucketListSidebarProps {
 export function BucketListSidebar({
   tripId,
   isOwner,
+  scheduledBucketIds,
   onDragStart,
   onReturnEvent,
 }: BucketListSidebarProps) {
@@ -68,6 +70,11 @@ export function BucketListSidebar({
     });
     return unsub;
   }, [tripId]);
+
+  const unscheduledItems = useMemo(
+    () => items.filter((item) => !scheduledBucketIds?.has(item.id)),
+    [items, scheduledBucketIds],
+  );
 
   return (
     <div
@@ -105,6 +112,11 @@ export function BucketListSidebar({
         <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--wb-ink)' }}>
           {isOwner ? 'Drag to schedule · drop here to return' : 'Saved activities'}
         </p>
+        {!loading && (
+          <p style={{ fontSize: 11, color: 'var(--wb-ink-soft)', marginTop: 4 }}>
+            {unscheduledItems.length} ready to schedule
+          </p>
+        )}
       </div>
 
       {/* Scrollable list */}
@@ -114,17 +126,19 @@ export function BucketListSidebar({
             Loading…
           </p>
         )}
-        {!loading && items.length === 0 && (
+        {!loading && unscheduledItems.length === 0 && (
           <div style={{ border: '1.5px dashed var(--wb-line)', borderRadius: 12, padding: '32px 12px', textAlign: 'center' }}>
             <p style={{ fontSize: 12, color: 'var(--wb-ink-soft)', lineHeight: 1.5 }}>
-              No bucket list items yet.
+              {items.length === 0
+                ? 'No bucket list items yet.'
+                : 'All saved items are already scheduled.'}
               <br />
-              Discover places and save them.
+              Add again from Discover to schedule repeat visits.
             </p>
           </div>
         )}
 
-        {items.map((item) => (
+        {unscheduledItems.map((item) => (
           <BucketCard
             key={item.id}
             item={item}
@@ -149,7 +163,6 @@ function BucketCard({
   onDragStart: (item: BucketItem) => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const stars = Math.round(item.rating);
 
   return (
     <div
@@ -179,41 +192,70 @@ function BucketCard({
         transition: 'box-shadow var(--wb-fast), border-color var(--wb-fast)',
       }}
     >
-      {/* Photo */}
-      {item.photoUrl && (
-        <div style={{ height: 84, overflow: 'hidden' }}>
-          <img
-            src={item.photoUrl}
-            alt={item.name}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            loading="lazy"
-          />
+      <div style={{ display: 'flex', gap: 10, padding: 10 }}>
+        <div
+          style={{
+            width: 70,
+            height: 70,
+            borderRadius: 10,
+            overflow: 'hidden',
+            flexShrink: 0,
+            background: 'var(--wb-paper-2)',
+            border: '1px solid var(--wb-line)',
+          }}
+        >
+          {item.photoUrl ? (
+            <img
+              src={item.photoUrl}
+              alt={item.name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              loading="lazy"
+            />
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+              📍
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Info */}
-      <div style={{ padding: '10px 12px 12px' }}>
-        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--wb-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {item.name}
-        </p>
-        <p style={{ fontSize: 10, color: 'var(--wb-ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
-          {item.address}
-        </p>
-        {item.rating > 0 && (
-          <p style={{ fontSize: 10, color: 'var(--wb-sun)', marginTop: 4 }}>
-            {'★'.repeat(stars)}{'☆'.repeat(5 - stars)}{' '}{item.rating.toFixed(1)}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--wb-ink)', lineHeight: 1.25 }}>
+            {item.name}
           </p>
-        )}
-        {item.durationMinutes && (
-          <p style={{ fontSize: 10, color: 'var(--wb-ink-soft)', marginTop: 2 }}>
-            {formatDuration(item.durationMinutes)}
+          <p
+            style={{
+              fontSize: 10,
+              color: 'var(--wb-ink-soft)',
+              marginTop: 3,
+              lineHeight: 1.3,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {item.address}
           </p>
-        )}
-        {isOwner && (
-          <p style={{ fontSize: 9, color: 'var(--wb-ocean)', marginTop: 6, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            drag to add →
-          </p>
-        )}
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+            {item.rating > 0 && (
+              <span style={{ fontSize: 10, color: '#946200', background: '#FFF7D9', border: '1px solid #F4D47B', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}>
+                ★ {item.rating.toFixed(1)}
+              </span>
+            )}
+            {item.durationMinutes && (
+              <span style={{ fontSize: 10, color: 'var(--wb-ink-soft)', background: 'var(--wb-paper-2)', border: '1px solid var(--wb-line)', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}>
+                {formatDuration(item.durationMinutes)}
+              </span>
+            )}
+          </div>
+
+          {isOwner && (
+            <p style={{ fontSize: 9, color: 'var(--wb-ocean)', marginTop: 7, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              Drag to schedule
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

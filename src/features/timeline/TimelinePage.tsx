@@ -9,7 +9,7 @@
 //  - CreateEventModal, toast notifications
 //  - DayWeatherSummary strip
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useTripStore } from '@/features/trips/useTripStore';
@@ -233,6 +233,12 @@ export function TimelinePage() {
 
   const tripDays         = getDatesInRange(activeTrip.startDate, activeTrip.endDate);
   const showWeatherStrip = geo.status === 'ready' && tripDays.length > 0;
+  const scheduledBucketIds = useMemo(
+    () => new Set(events
+      .map((ev) => ev.bucketItemId)
+      .filter((id): id is string => Boolean(id))),
+    [events],
+  );
 
   // Day navigation helpers (single-day mode)
   const currentDayIndex = tripDays.indexOf(selectedDay);
@@ -255,6 +261,7 @@ export function TimelinePage() {
           <BucketListSidebar
             tripId={activeTrip.id}
             isOwner={isOwner}
+            scheduledBucketIds={scheduledBucketIds}
             onDragStart={(item) => setDraggingBucket(item)}
             onReturnEvent={async (eventId) => {
               const result = await deleteTimelineEvent(activeTrip.id, eventId);

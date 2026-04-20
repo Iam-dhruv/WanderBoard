@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { BucketListUserData, Result } from '@/types';
 import type { Place } from '@/features/discovery/types';
 import { Modal } from '@/components/ui';
@@ -52,15 +52,6 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
     setError(null);
   }, [isOpen]);
 
-  const proposedTime = useMemo(() => {
-    if (!date || !time) return undefined;
-    const combined = new Date(`${date}T${time}`);
-    if (Number.isNaN(combined.getTime())) {
-      return undefined;
-    }
-    return combined.toISOString();
-  }, [date, time]);
-
   const handleSubmit = async () => {
     if (isSubmitting) return;
 
@@ -84,8 +75,11 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
     setError(null);
 
     try {
+      const proposedTime = toIsoDateTime(date, time);
+
       const result = await onSubmit({
         notes: notes.trim() || undefined,
+        proposedDate: date || undefined,
         proposedTime,
         activityType: activityType || undefined,
         durationMinutes,
@@ -178,7 +172,7 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
         </Field>
 
         <p className="text-xs text-gray-500">
-          Date and time are optional. If you provide both, the weather contingency check will use that time.
+          Date is used for planning + forecast day. Time is optional and refines weather context.
         </p>
 
         {error && <p className="text-xs text-rose-600">{error}</p>}
@@ -203,6 +197,13 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
       </div>
     </Modal>
   );
+}
+
+function toIsoDateTime(date: string, time: string): string | undefined {
+  if (!date || !time) return undefined;
+  const combined = new Date(`${date}T${time}`);
+  if (Number.isNaN(combined.getTime())) return undefined;
+  return combined.toISOString();
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

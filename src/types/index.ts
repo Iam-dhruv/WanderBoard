@@ -61,6 +61,7 @@ export type BucketListPriority = 'low' | 'medium' | 'high';
 export interface BucketListUserData {
   customTitle?: string;
   notes?: string;
+  proposedDate?: string; // YYYY-MM-DD
   proposedTime?: string;
   activityType?: string;
   priority?: BucketListPriority;

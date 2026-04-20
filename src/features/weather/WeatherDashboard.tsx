@@ -1,26 +1,51 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useWeatherStore } from './useWeatherStore';
 import type { SolarData } from './types';
+import { DayWeatherSummary } from './DayWeatherSummary';
 
 interface WeatherDashboardProps {
   lat:  number;
   lon:  number;
-  date: string; // YYYY-MM-DD
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
 }
 
-export function WeatherDashboard({ lat, lon, date }: WeatherDashboardProps) {
+export function WeatherDashboard({ lat, lon, startDate, endDate }: WeatherDashboardProps) {
   const { weather, solar, weatherLoading, weatherError, solarError, loadEnvironmentalData } = useWeatherStore();
+  const tripDays = useMemo(() => getDatesInRange(startDate, endDate), [startDate, endDate]);
+  const [selectedDate, setSelectedDate] = useState(startDate);
 
   useEffect(() => {
-    loadEnvironmentalData({ lat, lon, date });
-  }, [lat, lon, date]);
+    if (!tripDays.length) return;
+    if (!tripDays.includes(selectedDate)) {
+      setSelectedDate(tripDays[0]);
+    }
+  }, [tripDays, selectedDate]);
+
+  useEffect(() => {
+    if (!tripDays.length) return;
+    loadEnvironmentalData({ lat, lon, date: selectedDate });
+  }, [lat, lon, selectedDate, tripDays.length, loadEnvironmentalData]);
+
+  if (!tripDays.length) {
+    return (
+      <div
+        className="rounded-[16px] border-[1.5px] border-dashed py-6 text-center"
+        style={{ borderColor: 'var(--wb-line)', background: '#fff' }}
+      >
+        <p className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>
+          Trip dates are unavailable for this trip.
+        </p>
+      </div>
+    );
+  }
 
   if (weatherLoading) {
     return (
       <div className="rounded-[16px] border px-5 py-5" style={{ background: '#fff', borderColor: 'var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)' }}>
         <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--wb-ink-soft)' }}>
           <LoadingSpinner />
-          Fetching weather data…
+          Fetching the latest forecast…
         </div>
       </div>
     );
@@ -28,6 +53,7 @@ export function WeatherDashboard({ lat, lon, date }: WeatherDashboardProps) {
 
   const hasError   = weatherError || solarError;
   const rainAlert  = weather && weather.precipitationProbability > 20;
+  const selectedDayIndex = Math.max(0, tripDays.indexOf(selectedDate));
 
   return (
     <div className="space-y-3">
@@ -40,17 +66,17 @@ export function WeatherDashboard({ lat, lon, date }: WeatherDashboardProps) {
         >
           <span className="mt-0.5 text-base" style={{ color: 'var(--wb-sunset)' }}>⚠</span>
           <div>
-            <p className="text-sm font-semibold" style={{ color: 'var(--wb-sunset)' }}>Rain Predicted: Outdoor Hazard</p>
+            <p className="text-sm font-semibold" style={{ color: 'var(--wb-sunset)' }}>Rain expected: Outdoor caution</p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--wb-sunset)', opacity: 0.8 }}>
-              {weather.precipitationProbability}% precipitation on {date}. Consider rescheduling outdoor activities.
+              Rain chance is {weather.precipitationProbability}% on {formatDayFull(selectedDate)}. Consider moving outdoor plans indoors.
             </p>
           </div>
         </div>
       )}
 
       {/* Error states */}
-      {weatherError && <ErrorBanner message={weatherError} label="Weather unavailable" />}
-      {solarError && !weatherError && <ErrorBanner message={solarError} label="Solar data unavailable" />}
+      {weatherError && <ErrorBanner message={weatherError} label="Forecast unavailable" />}
+      {solarError && !weatherError && <ErrorBanner message={solarError} label="Sun data unavailable" />}
 
       {/* Main card */}
       {(weather || solar) && (
@@ -64,9 +90,45 @@ export function WeatherDashboard({ lat, lon, date }: WeatherDashboardProps) {
             style={{ borderBottom: '1px solid var(--wb-line)' }}
           >
             <h3 className="text-sm font-semibold" style={{ color: 'var(--wb-ink)' }}>
-              🌍 Environmental Dashboard
+              Weather Dashboard
             </h3>
-            <span className="text-xs" style={{ color: 'var(--wb-ink-soft)' }}>{date}</span>
+            <span className="text-xs" style={{ color: 'var(--wb-ink-soft)' }}>
+              Day {selectedDayIndex + 1} of {tripDays.length}
+            </span>
+          </div>
+
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--wb-line)', background: 'var(--wb-paper)' }}>
+            <p
+              className="text-[10px] font-bold uppercase tracking-[0.16em] mb-2"
+              style={{ color: 'var(--wb-ink-soft)' }}
+            >
+              Trip forecast
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {tripDays.map((tripDay) => {
+                const active = tripDay === selectedDate;
+                return (
+                  <button
+                    key={tripDay}
+                    type="button"
+                    onClick={() => setSelectedDate(tripDay)}
+                    className="rounded-[10px] p-2 min-w-[118px] text-left transition-colors"
+                    style={{
+                      border: active ? '1.5px solid var(--wb-ocean)' : '1px solid var(--wb-line)',
+                      background: active ? 'rgba(14,107,168,0.07)' : '#fff',
+                    }}
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: active ? 'var(--wb-ocean)' : 'var(--wb-ink-soft)' }}>
+                      {formatWeekday(tripDay)}
+                    </p>
+                    <p className="text-xs font-semibold mb-1" style={{ color: 'var(--wb-ink)' }}>
+                      {formatDayShort(tripDay)}
+                    </p>
+                    <DayWeatherSummary date={tripDay} lat={lat} lon={lon} />
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {weather?.location && (
@@ -92,8 +154,8 @@ export function WeatherDashboard({ lat, lon, date }: WeatherDashboardProps) {
                     ☀️ Sun & Golden Hours
                   </p>
                   <div className="grid grid-cols-2 gap-3">
-                    <SolarCard emoji="🌅" label="Sunrise" time={solar.sunrise} goldenLabel="Morning golden hour" goldenRange={`${solar.goldenHourMorningStart} – ${solar.goldenHourMorningEnd}`} color="amber" />
-                    <SolarCard emoji="🌇" label="Sunset"  time={solar.sunset}  goldenLabel="Evening golden hour"  goldenRange={`${solar.goldenHourEveningStart} – ${solar.goldenHourEveningEnd}`}  color="orange" />
+                    <SolarCard emoji="🌅" label="Sunrise" time={solar.sunrise} goldenLabel="Morning golden hour" goldenRange={`${solar.goldenHourMorningStart} - ${solar.goldenHourMorningEnd}`} color="amber" />
+                    <SolarCard emoji="🌇" label="Sunset"  time={solar.sunset}  goldenLabel="Evening golden hour"  goldenRange={`${solar.goldenHourEveningStart} - ${solar.goldenHourEveningEnd}`}  color="orange" />
                   </div>
                 </div>
                 <GoldenHourTimeline solar={solar} />
@@ -222,4 +284,42 @@ function LoadingSpinner() {
 
 function capitalise(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function getDatesInRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || cursor > end) return dates;
+
+  while (cursor <= end) {
+    dates.push(toIsoLocalDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+function toIsoLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatWeekday(value: string): string {
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (Number.isNaN(parsed)) return value;
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(parsed));
+}
+
+function formatDayShort(value: string): string {
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (Number.isNaN(parsed)) return value;
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(parsed));
+}
+
+function formatDayFull(value: string): string {
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (Number.isNaN(parsed)) return value;
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(new Date(parsed));
 }

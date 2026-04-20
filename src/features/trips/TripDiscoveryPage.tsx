@@ -3,10 +3,12 @@ import type { ReactNode } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import type { MapMarker } from '@/components/MapView';
 import { DiscoveryList } from '@/features/discovery/components/DiscoveryList';
+import { AddToBucketModal } from '@/features/discovery/components/AddToBucketModal';
 import type { Place } from '@/features/discovery/types';
 import { getPlaceColor, getPlaceLabel } from '@/features/discovery/utils/placeColor';
 import { addToBucket } from '@/features/discovery/services/bucketService';
 import { useAuth } from '@/features/auth/AuthProvider';
+import { err, ok, type BucketListUserData } from '@/types';
 import { useTripStore } from './useTripStore';
 import { useTripMap } from './TripMapContext';
 import { useTripGeo } from './TripWorkspacePage';
@@ -40,30 +42,66 @@ function mapNearbyResult(result: google.maps.places.PlaceResult): Place | null {
 
 // ─── Info-window card rendered on the shared map ───────────────────────────────
 
-function PlaceInfoCard({ place, tripId }: { place: Place; tripId: string }) {
+function PlaceInfoCard({
+  place,
+  tripId,
+  tripStartDate,
+  tripEndDate,
+}: {
+  place: Place;
+  tripId: string;
+  tripStartDate?: string;
+  tripEndDate?: string;
+}) {
   const { user } = useAuth();
   const [added,  setAdded]  = useState(false);
   const [adding, setAdding] = useState(false);
   const [error,  setError]  = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const color = getPlaceColor(place.types ?? []);
   const label = getPlaceLabel(place.types ?? []);
 
-  async function handleQuickAdd() {
-    if (!user || added || adding) return;
+  const addedBy = user
+    ? {
+        userId: user.uid,
+        displayName: user.displayName ?? user.email ?? 'Traveler',
+        photoURL: user.photoURL ?? null,
+      }
+    : null;
+
+  async function handleAddFromModal(userData: BucketListUserData) {
+    if (added || adding) {
+      return err('Item already added.');
+    }
+    if (!addedBy) {
+      const message = 'Please sign in to add places.';
+      setError(message);
+      return err(message);
+    }
+
     setAdding(true);
     setError(null);
-    const result = await addToBucket(tripId, place, {
-      userId:      user.uid,
-      displayName: user.displayName ?? user.email ?? 'Traveler',
-      photoURL:    user.photoURL ?? null,
-    });
+    const result = await addToBucket(tripId, place, addedBy, userData);
     setAdding(false);
+
     if (result.ok || result.error?.includes('already')) {
       setAdded(true);
-    } else {
-      setError(result.error);
+      return ok(undefined);
     }
+
+    setError(result.error);
+    return result;
+  }
+
+  function handleOpenModal() {
+    if (added || adding) return;
+    if (!user) {
+      setError('Please sign in to add places.');
+      return;
+    }
+    setError(null);
+    setIsModalOpen(true);
   }
 
   return (
@@ -78,7 +116,7 @@ function PlaceInfoCard({ place, tripId }: { place: Place; tripId: string }) {
       </p>
       {error && <p style={{ fontSize: 11, color: 'var(--wb-sunset)', marginBottom: 6 }}>{error}</p>}
       <button
-        onClick={handleQuickAdd}
+        onClick={handleOpenModal}
         disabled={added || adding || !user}
         style={{
           display: 'block', width: '100%', padding: '6px 0', borderRadius: 8, border: 'none',
@@ -89,6 +127,14 @@ function PlaceInfoCard({ place, tripId }: { place: Place; tripId: string }) {
       >
         {added ? '✓ Added' : adding ? 'Adding…' : '+ Add to bucket list'}
       </button>
+      <AddToBucketModal
+        isOpen={isModalOpen}
+        place={place}
+        minDate={tripStartDate}
+        maxDate={tripEndDate}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleAddFromModal}
+      />
     </div>
   );
 }
@@ -224,7 +270,14 @@ export function TripDiscoveryPage() {
 
     const renderer = (id: string): ReactNode => {
       const place = places.find((p) => p.placeId === id);
-      return place ? <PlaceInfoCard place={place} tripId={activeTrip.id} /> : null;
+      return place ? (
+        <PlaceInfoCard
+          place={place}
+          tripId={activeTrip.id}
+          tripStartDate={activeTrip.startDate}
+          tripEndDate={activeTrip.endDate}
+        />
+      ) : null;
     };
     setRenderInfoWindow(renderer);
 

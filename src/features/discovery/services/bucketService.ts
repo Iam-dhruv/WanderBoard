@@ -112,6 +112,13 @@ function normalizeUserData(userData?: BucketListUserData): BucketListUserData | 
     normalized.notes = userData.notes.trim();
   }
 
+  if (userData.proposedDate?.trim()) {
+    const proposedDate = userData.proposedDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(proposedDate)) {
+      normalized.proposedDate = proposedDate;
+    }
+  }
+
   if (userData.proposedTime?.trim()) {
     normalized.proposedTime = userData.proposedTime.trim();
   }
@@ -153,52 +160,41 @@ export async function addToBucket(
   }
 
   try {
-    const itemRef = bucketItemDoc(normalizedTripId, place.placeId);
     const order = Date.now();
     const location = place.location
       ? { lat: place.location.lat, lng: place.location.lng }
       : undefined;
     const trimmedUserData = normalizeUserData(userData);
 
-    await runTransaction(db, async (tx) => {
-      const existing = await tx.get(itemRef);
-      if (existing.exists()) {
-        throw new Error('ALREADY_EXISTS');
-      }
+    const payload: Record<string, unknown> = {
+      name: place.name,
+      rating: place.rating,
+      address: place.address,
+      photoUrl: place.photoUrl,
+      placeId: place.placeId,
+      addedById: addedBy.userId,
+      addedByName: addedBy.displayName,
+      addedByPhotoUrl: addedBy.photoURL,
+      createdAt: serverTimestamp(),
+      order,
+      upvotes: 0,
+      downvotes: 0,
+      score: 0,
+      votesByUser: {},
+    };
 
-      const payload: Record<string, unknown> = {
-        name: place.name,
-        rating: place.rating,
-        address: place.address,
-        photoUrl: place.photoUrl,
-        placeId: place.placeId,
-        addedById: addedBy.userId,
-        addedByName: addedBy.displayName,
-        addedByPhotoUrl: addedBy.photoURL,
-        createdAt: serverTimestamp(),
-        order,
-        upvotes: 0,
-        downvotes: 0,
-        score: 0,
-        votesByUser: {},
-      };
+    if (location) {
+      payload.location = location;
+    }
 
-      if (location) {
-        payload.location = location;
-      }
+    if (trimmedUserData) {
+      payload.userData = trimmedUserData;
+    }
 
-      if (trimmedUserData) {
-        payload.userData = trimmedUserData;
-      }
-
-      tx.set(itemRef, payload);
-    });
+    await addDoc(bucketListCol(normalizedTripId), payload);
 
     return ok(undefined);
   } catch (e: any) {
-    if (e?.message === 'ALREADY_EXISTS') {
-      return err('This place is already in the bucket list.');
-    }
     console.error('[addToBucket]', e);
     return err('Failed to add this place. Please try again.');
   }

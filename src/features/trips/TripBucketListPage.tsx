@@ -236,6 +236,7 @@ export function TripBucketListPage() {
                   item={item}
                   tripId={activeTrip.id}
                   tripStartDate={activeTrip.startDate}
+                  tripEndDate={activeTrip.endDate}
                   isOwner={isOwner}
                   currentUser={user}
                 />
@@ -251,6 +252,7 @@ export function TripBucketListPage() {
               item={item}
               tripId={activeTrip.id}
               tripStartDate={activeTrip.startDate}
+              tripEndDate={activeTrip.endDate}
               isOwner={isOwner}
               currentUser={user}
             />
@@ -293,6 +295,7 @@ function SortableBucketCard(props: {
   item: BucketListItem;
   tripId: string;
   tripStartDate: string;
+  tripEndDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
 }) {
@@ -322,6 +325,7 @@ function BucketListCard({
   item,
   tripId,
   tripStartDate,
+  tripEndDate,
   isOwner,
   currentUser,
   showDragHandle = false,
@@ -331,6 +335,7 @@ function BucketListCard({
   item: BucketListItem;
   tripId: string;
   tripStartDate: string;
+  tripEndDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
   showDragHandle?: boolean;
@@ -347,7 +352,13 @@ function BucketListCard({
   const currentUserId = currentUser?.uid ?? null;
   const currentVote: VoteValue = currentUserId ? (item.votesByUser[currentUserId] ?? 0) : 0;
   const canDelete = Boolean(currentUserId && (isOwner || item.addedById === currentUserId));
-  const proposedLabel = item.userData?.proposedTime ? formatDateTime(item.userData.proposedTime) : null;
+  const proposedLabel = getProposedLabel(item.userData?.proposedDate, item.userData?.proposedTime);
+  const weatherTarget = resolveBucketWeatherDate({
+    proposedDate: item.userData?.proposedDate,
+    proposedTime: item.userData?.proposedTime,
+    tripStartDate,
+    tripEndDate,
+  });
 
   const handleVote = async (direction: 'up' | 'down') => {
     if (!currentUserId || voteLoading) {
@@ -417,6 +428,11 @@ function BucketListCard({
               <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700">
                 Rating {item.rating.toFixed(1)}
               </span>
+              {proposedLabel && (
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">
+                  Proposed for {proposedLabel}
+                </span>
+              )}
               <span>Added by {item.addedByName}</span>
               <span>{formatDate(item.createdAt)}</span>
             </div>
@@ -424,19 +440,38 @@ function BucketListCard({
 
           {/* ── Weather section ─────────────────────────────────────────────────
               Priority:
-              1. If Firestore already has fresh weather data → render it (legacy path)
-              2. If the item has a location but no weather → render MiniWeatherCard
-                 which geocodes + fetches from src/features/weather/* only        */}
-          {item.weather ? (
+              1. If item has coordinates → fetch live weather for target visit day
+              2. Else, if Firestore weather exists → render legacy snapshot      */}
+          {item.location ? (
+            /* ── MiniWeatherCard: use saved coordinates (fallback to place name) */
+            <MiniWeatherCard
+              lat={item.location.lat}
+              lon={item.location.lng}
+              placeName={item.address}
+              tripDate={weatherTarget.date}
+              forecastLabel={weatherTarget.label}
+            />
+          ) : item.weather ? (
             <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-semibold text-gray-900">
-                  {Math.round(item.weather.temperature)} °C
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.1em] text-gray-500">Weather summary</p>
+                  <p className="text-sm font-semibold text-gray-900">{Math.round(item.weather.temperature)}°C</p>
+                </div>
                 <span className="flex items-center gap-1 text-xs text-gray-600">
                   <span className="h-2 w-2 rounded-full bg-sky-400" aria-hidden />
                   {item.weather.condition}
                 </span>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                <LegacyWeatherFact label="Sunrise" value={formatTime(item.weather.sunrise)} />
+                <LegacyWeatherFact label="Sunset" value={formatTime(item.weather.sunset)} />
+                <LegacyWeatherFact label="Condition code" value={String(item.weather.conditionCode)} />
+                <LegacyWeatherFact label="Updated" value={formatTime(item.weather.updatedAt)} />
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 {item.weather.isGoldenHour && (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                     Golden hour now
@@ -448,16 +483,10 @@ function BucketListCard({
                   </span>
                 )}
               </div>
-              <div className="mt-2 text-xs text-gray-500">
-                Sunrise {formatTime(item.weather.sunrise)} · Sunset {formatTime(item.weather.sunset)}
+              <div className="mt-2 text-[11px] text-gray-500">
+                Snapshot captured on {formatDate(item.weather.updatedAt)} at {formatTime(item.weather.updatedAt)}
               </div>
             </div>
-          ) : item.location ? (
-            /* ── MiniWeatherCard: geocodes place name → fetches weather ──────── */
-            <MiniWeatherCard
-              placeName={item.address}
-              tripDate={tripStartDate}
-            />
           ) : null}
 
           {item.userData && (
@@ -470,11 +499,6 @@ function BucketListCard({
               {typeof item.userData.durationMinutes === 'number' && (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
                   {item.userData.durationMinutes} min
-                </span>
-              )}
-              {proposedLabel && (
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
-                  {proposedLabel}
                 </span>
               )}
             </div>
@@ -655,6 +679,89 @@ function BucketItemComments({
   );
 }
 
+function LegacyWeatherFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-2 py-1">
+      <p className="text-[10px] uppercase tracking-[0.08em] text-gray-500">{label}</p>
+      <p className="mt-0.5 text-xs font-semibold text-gray-700">{value}</p>
+    </div>
+  );
+}
+
+function resolveBucketWeatherDate({
+  proposedDate,
+  proposedTime,
+  tripStartDate,
+  tripEndDate,
+}: {
+  proposedDate?: string;
+  proposedTime?: string;
+  tripStartDate: string;
+  tripEndDate: string;
+}): { date: string; label: string } {
+  const normalizedProposedDate = normalizeIsoDate(proposedDate);
+  if (normalizedProposedDate) {
+    return { date: normalizedProposedDate, label: `Forecast for ${formatIsoDate(normalizedProposedDate)}` };
+  }
+
+  const proposedDateFromTime = getDateFromProposedTime(proposedTime);
+  if (proposedDateFromTime) {
+    return { date: proposedDateFromTime, label: `Forecast for ${formatIsoDate(proposedDateFromTime)}` };
+  }
+
+  const today = toIsoLocalDate(new Date());
+  const tripIsOngoingAfterStart = today > tripStartDate && today <= tripEndDate;
+
+  if (tripIsOngoingAfterStart) {
+    return { date: today, label: 'Forecast for today' };
+  }
+
+  return { date: tripStartDate, label: 'Forecast for trip start' };
+}
+
+function getProposedLabel(proposedDate?: string, proposedTime?: string): string | null {
+  const normalizedProposedDate = normalizeIsoDate(proposedDate);
+  if (normalizedProposedDate) {
+    return formatIsoDate(normalizedProposedDate);
+  }
+
+  if (proposedTime) {
+    return formatDateTime(proposedTime);
+  }
+
+  return null;
+}
+
+function normalizeIsoDate(value?: string): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+function getDateFromProposedTime(value?: string): string | null {
+  if (!value) return null;
+
+  const directDateMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (directDateMatch) return directDateMatch[1];
+
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return toIsoLocalDate(new Date(parsed));
+}
+
+function toIsoLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatIsoDate(value: string): string {
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (Number.isNaN(parsed)) return value;
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(new Date(parsed));
+}
+
 // ─── Formatting helpers ────────────────────────────────────────────────────────
 
 function formatDate(value: number) {
@@ -670,7 +777,7 @@ function formatDateTime(value: string) {
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) return value;
   return new Intl.DateTimeFormat('en-US', {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
   }).format(new Date(parsed));
 }
 

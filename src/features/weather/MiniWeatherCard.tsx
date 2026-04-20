@@ -14,40 +14,60 @@ type MiniWeatherState =
 // ─── Props ─────────────────────────────────────────────────────────────────────
 
 interface MiniWeatherCardProps {
-  /** Place name used for geocoding (e.g. "Taj Mahal", "Café de Flore, Paris") */
-  placeName: string;
   /** YYYY-MM-DD — the trip start date used for the forecast lookup */
   tripDate: string;
+  /** Optional label describing which day this forecast corresponds to. */
+  forecastLabel?: string;
+  /** Optional direct coordinates. When present, geocoding is skipped. */
+  lat?: number;
+  lon?: number;
+  /** Optional place name fallback when coordinates are not available. */
+  placeName?: string;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export function MiniWeatherCard({ placeName, tripDate }: MiniWeatherCardProps) {
+export function MiniWeatherCard({ placeName, tripDate, forecastLabel, lat, lon }: MiniWeatherCardProps) {
   const [state, setState] = useState<MiniWeatherState>({ status: 'idle' });
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    setIsExpanded(false);
+  }, [lat, lon, placeName, tripDate]);
 
   useEffect(() => {
     let cancelled = false;
     setState({ status: 'loading' });
 
     async function resolve() {
-      // Step 1: geocode place name → lat/lon
-      const geoResult = await getCoordinatesFromCity(placeName);
-      if (!placeName || placeName.length < 3) {
-        setState({ status: 'error', message: 'Invalid place' });
-        return;
-      }      
-      
-      if (cancelled) return;
+      let targetLat = lat;
+      let targetLon = lon;
 
-      if (!geoResult.ok) {
-        setState({ status: 'error', message: geoResult.error });
-        return;
+      // Fallback: if coordinates are unavailable, geocode the place name.
+      if (typeof targetLat !== 'number' || typeof targetLon !== 'number') {
+        if (!placeName || placeName.length < 3) {
+          setState({ status: 'error', message: 'Invalid place' });
+          return;
+        }
+
+        const geoResult = await getCoordinatesFromCity(placeName);
+        if (cancelled) return;
+
+        if (!geoResult.ok) {
+          setState({ status: 'error', message: geoResult.error });
+          return;
+        }
+
+        targetLat = geoResult.data.lat;
+        targetLon = geoResult.data.lon;
       }
+
+      if (cancelled) return;
 
       // Step 2: fetch weather for those coordinates
       const weatherResult = await fetchWeatherData({
-        lat: geoResult.data.lat,
-        lon: geoResult.data.lon,
+        lat: targetLat,
+        lon: targetLon,
         date: tripDate,
       });
       if (cancelled) return;
@@ -62,7 +82,7 @@ export function MiniWeatherCard({ placeName, tripDate }: MiniWeatherCardProps) {
 
     void resolve();
     return () => { cancelled = true; };
-  }, [placeName, tripDate]);
+  }, [lat, lon, placeName, tripDate]);
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (state.status === 'idle' || state.status === 'loading') {
@@ -78,7 +98,8 @@ export function MiniWeatherCard({ placeName, tripDate }: MiniWeatherCardProps) {
   if (state.status === 'error') {
     return (
       <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs text-gray-400">
-        Weather unavailable
+        <p className="font-medium text-gray-500">Weather unavailable</p>
+        <p className="mt-0.5 line-clamp-2">{state.message}</p>
       </div>
     );
   }
@@ -86,46 +107,117 @@ export function MiniWeatherCard({ placeName, tripDate }: MiniWeatherCardProps) {
   // ── Ready ────────────────────────────────────────────────────────────────────
   const { data } = state;
   const isRainy = data.precipitationProbability > 20;
+  const rainSeverity = getRainSeverity(data.precipitationProbability);
+  const windBand = getWindBand(data.windSpeed);
 
   return (
     <div className={`rounded-xl border px-3 py-2.5 ${
       isRainy ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'
     }`}>
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Temperature */}
-        <span className={`text-sm font-semibold ${isRainy ? 'text-red-800' : 'text-gray-900'}`}>
-          {data.temperature}°C
-        </span>
-
-        {/* Condition dot + label */}
-        <span className="flex items-center gap-1 text-xs text-gray-600">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+            {forecastLabel ?? `Forecast for ${tripDate}`}
+          </p>
+          <p className={`text-base font-semibold ${isRainy ? 'text-red-800' : 'text-gray-900'}`}>
+            {data.temperature}°C
+            <span className="ml-1 text-xs font-medium text-gray-500">Feels like {data.feelsLike}°C</span>
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
           <span
-            className={`h-2 w-2 rounded-full ${isRainy ? 'bg-red-400' : 'bg-sky-400'}`}
-            aria-hidden
-          />
-          {capitalise(data.description)}
-        </span>
-
-        {/* Rain probability */}
-        <span className={`text-xs font-medium ${isRainy ? 'text-red-700' : 'text-gray-500'}`}>
-          🌧 {data.precipitationProbability}%
-        </span>
-
-        {/* Outdoor hazard badge */}
-        {isRainy && (
-          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-            ⚠️ Outdoor Hazard
+            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              isRainy ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+            }`}
+          >
+            {rainSeverity}
           </span>
-        )}
+          <button
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            className="text-[11px] font-semibold text-gray-500 hover:text-gray-700"
+            aria-expanded={isExpanded}
+          >
+            {isExpanded ? 'Hide details' : 'Show details'}
+          </button>
+        </div>
       </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+        <span
+          className={`h-2 w-2 rounded-full ${isRainy ? 'bg-red-400' : 'bg-sky-400'}`}
+          aria-hidden
+        />
+        <span>{capitalise(data.description)}</span>
+        {isRainy && <span className="text-red-700">Outdoor plans may be affected.</span>}
+      </div>
+
+      {isExpanded && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+            <WeatherFact label="Rain chance" value={`${data.precipitationProbability}%`} tone={isRainy ? 'danger' : 'neutral'} />
+            <WeatherFact label="Humidity" value={`${data.humidity}%`} tone={data.humidity >= 75 ? 'warn' : 'neutral'} />
+            <WeatherFact label="Wind" value={`${data.windSpeed} m/s`} tone={windBand === 'Breezy+' ? 'warn' : 'neutral'} />
+            <WeatherFact label="Wind level" value={windBand} tone={windBand === 'Breezy+' ? 'warn' : 'neutral'} />
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+            {data.location && <span>Forecast area: {data.location}</span>}
+            <span>Updated {formatLocalTime(data.fetchedAt)}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
+function WeatherFact({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'neutral' | 'warn' | 'danger';
+}) {
+  const toneClass =
+    tone === 'danger'
+      ? 'border-red-200 bg-red-100/70 text-red-700'
+      : tone === 'warn'
+        ? 'border-amber-200 bg-amber-100/70 text-amber-700'
+        : 'border-gray-200 bg-white text-gray-600';
+
+  return (
+    <div className={`rounded-lg border px-2 py-1 ${toneClass}`}>
+      <p className="text-[10px] uppercase tracking-[0.08em] opacity-80">{label}</p>
+      <p className="text-xs font-semibold mt-0.5">{value}</p>
+    </div>
+  );
+}
+
 function capitalise(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function getRainSeverity(probability: number): string {
+  if (probability >= 60) return 'High rain risk';
+  if (probability >= 30) return 'Moderate rain risk';
+  return 'Low rain risk';
+}
+
+function getWindBand(windSpeed: number): string {
+  if (windSpeed >= 8) return 'Breezy+';
+  if (windSpeed >= 4) return 'Light breeze';
+  return 'Calm';
+}
+
+function formatLocalTime(timestamp: number): string {
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
 }
 
 function MiniSpinner() {

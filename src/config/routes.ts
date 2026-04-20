@@ -12,7 +12,6 @@ export const ROUTES = {
   TRIP_DISCOVERY:   '/trip/:tripId/discovery',
   TRIP_TIMELINE:    '/trip/:tripId/timeline',
   TRIP_EXPENSES:    '/trip/:tripId/expenses',
-  TRIP_CONTINGENCY: '/trip/:tripId/contingency',
   // Helper to build a concrete trip URL — avoids manual string interpolation
   trip:              (tripId: string) => `/trip/${tripId}`,
   tripPlanning:      (tripId: string) => `/trip/${tripId}/planning`,
@@ -20,5 +19,4 @@ export const ROUTES = {
   tripDiscovery:     (tripId: string) => `/trip/${tripId}/discovery`,
   tripTimeline:      (tripId: string) => `/trip/${tripId}/timeline`,
   tripExpenses:      (tripId: string) => `/trip/${tripId}/expenses`,
-  tripContingency:   (tripId: string) => `/trip/${tripId}/contingency`,
 } as const;

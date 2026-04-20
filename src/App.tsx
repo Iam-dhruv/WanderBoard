@@ -9,7 +9,6 @@ import { TripBucketListPage } from '@/features/trips/TripBucketListPage';
 import { TripPlanningPage } from '@/features/trips/TripPlanningPage';
 import { TripDiscoveryPage } from '@/features/trips/TripDiscoveryPage';
 import { ExpensesPage } from '@/features/expenses/ExpensesPage';
-import { TripFeaturePlaceholderPage } from '@/features/trips/TripFeaturePlaceholderPage';
 import { TimelinePage } from '@/features/timeline/TimelinePage';
 import { ROUTES } from '@/config/routes';
 
@@ -38,16 +37,6 @@ export default function App() {
 
               {/* ✅ Keep actual Expenses feature (NOT placeholder) */}
               <Route path="expenses" element={<ExpensesPage />} />
-
-              <Route
-                path="contingency"
-                element={
-                  <TripFeaturePlaceholderPage
-                    title="Contingency"
-                    description="Weather-based warnings and trip contingency planning will live here."
-                  />
-                }
-              />
 
               <Route path="*" element={<Navigate to="planning" replace />} />
             </Route>
