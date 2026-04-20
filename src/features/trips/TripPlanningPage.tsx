@@ -32,7 +32,7 @@ export function TripPlanningPage() {
   const tripDays = getDatesInRange(activeTrip.startDate, activeTrip.endDate);
 
   return (
-    <div className="p-4">
+    <div className="h-full overflow-y-auto p-4">
       {tripDays.length === 0 ? (
         <div
           className="rounded-[16px] p-8 text-center border-[1.5px] border-dashed"
