@@ -765,7 +765,7 @@ function FeatureIconRail({
           <button
             key={panel.key}
             onClick={() => onToggle(panel.key)}
-            className="w-10 h-10 rounded-[10px] border-[1.5px] text-xs font-extrabold flex items-center justify-center transition-all"
+            className="h-10 min-w-[120px] px-3 rounded-[10px] border-[1.5px] text-xs font-semibold flex items-center justify-start transition-all whitespace-nowrap"
             style={{
               borderColor: isActive ? 'var(--wb-ink)' : 'var(--wb-line)',
               background: isOpen ? 'var(--wb-sun)' : '#fff',
@@ -774,7 +774,7 @@ function FeatureIconRail({
             }}
             title={panel.label}
           >
-            {panel.icon}
+            {panel.label}
           </button>
         );
       })}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
@@ -37,15 +37,44 @@ import { MiniWeatherCard } from '@/features/weather/MiniWeatherCard';
 
 const FALLBACK_CARD_IMAGE = 'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=800&q=80';
 
+function fetchPlacePhotoUrl(
+  service: google.maps.places.PlacesService,
+  placeId: string,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    service.getDetails(
+      { placeId, fields: ['photos'] },
+      (place, status) => {
+        if (
+          status !== window.google.maps.places.PlacesServiceStatus.OK
+          || !place?.photos?.length
+        ) {
+          resolve(null);
+          return;
+        }
+
+        try {
+          const url = place.photos[0].getUrl({ maxWidth: 1000, maxHeight: 700 });
+          resolve(url || null);
+        } catch {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
 export function TripBucketListPage() {
   const { activeTrip } = useTripStore();
   const { user } = useAuth();
-  const { setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId } = useTripMap();
+  const { mapRef, isLoaded, setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId } = useTripMap();
   const [items, setItems] = useState<BucketListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<BucketListSortMode>('score');
   const [scheduledBucketIds, setScheduledBucketIds] = useState<Set<string>>(new Set());
+  const [photoUrlOverrides, setPhotoUrlOverrides] = useState<Record<string, string>>({});
+  const photoLookupPendingRef = useRef<Set<string>>(new Set());
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // Track which bucket items have been scheduled in the timeline
@@ -133,6 +162,41 @@ export function TripBucketListPage() {
       setHoveredMarkerId(null);
     };
   }, [items, activeTrip, scheduledBucketIds, setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId]);
+
+  useEffect(() => {
+    if (!isLoaded || !mapRef.current || !window.google?.maps?.places) return;
+
+    const candidates = items.filter((item) => (
+      !item.photoUrl
+      && Boolean(item.placeId)
+      && !photoUrlOverrides[item.id]
+      && !photoLookupPendingRef.current.has(item.id)
+    ));
+
+    if (!candidates.length) return;
+
+    const service = new window.google.maps.places.PlacesService(mapRef.current);
+    let cancelled = false;
+
+    void (async () => {
+      for (const item of candidates) {
+        if (cancelled) return;
+
+        photoLookupPendingRef.current.add(item.id);
+        const photoUrl = await fetchPlacePhotoUrl(service, item.placeId);
+        photoLookupPendingRef.current.delete(item.id);
+
+        if (cancelled || !photoUrl) continue;
+        setPhotoUrlOverrides((prev) => (
+          prev[item.id] ? prev : { ...prev, [item.id]: photoUrl }
+        ));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [items, isLoaded, mapRef, photoUrlOverrides]);
 
   // NOTE: refreshBucketItemWeather removed — MiniWeatherCard handles its own fetching
   // from the canonical weather feature, so no duplicate API calls via the legacy service.
@@ -239,6 +303,7 @@ export function TripBucketListPage() {
                   tripEndDate={activeTrip.endDate}
                   isOwner={isOwner}
                   currentUser={user}
+                  photoUrlOverride={photoUrlOverrides[item.id]}
                 />
               ))}
             </div>
@@ -255,6 +320,7 @@ export function TripBucketListPage() {
               tripEndDate={activeTrip.endDate}
               isOwner={isOwner}
               currentUser={user}
+              photoUrlOverride={photoUrlOverrides[item.id]}
             />
           ))}
         </div>
@@ -298,6 +364,7 @@ function SortableBucketCard(props: {
   tripEndDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
+  photoUrlOverride?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.item.id,
@@ -331,6 +398,7 @@ function BucketListCard({
   showDragHandle = false,
   dragHandleProps,
   dragHandleAttributes,
+  photoUrlOverride,
 }: {
   item: BucketListItem;
   tripId: string;
@@ -341,6 +409,7 @@ function BucketListCard({
   showDragHandle?: boolean;
   dragHandleProps?: Record<string, unknown>;
   dragHandleAttributes?: DraggableAttributes;
+  photoUrlOverride?: string;
 }) {
   const [hasImageError, setHasImageError] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
@@ -359,6 +428,11 @@ function BucketListCard({
     tripStartDate,
     tripEndDate,
   });
+  const resolvedPhotoUrl = item.photoUrl || photoUrlOverride || FALLBACK_CARD_IMAGE;
+
+  useEffect(() => {
+    setHasImageError(false);
+  }, [item.photoUrl, photoUrlOverride]);
 
   const handleVote = async (direction: 'up' | 'down') => {
     if (!currentUserId || voteLoading) {
@@ -399,7 +473,7 @@ function BucketListCard({
     <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
       <div className="grid gap-4 p-4 md:grid-cols-[200px,1fr]">
         <img
-          src={hasImageError || !item.photoUrl ? FALLBACK_CARD_IMAGE : item.photoUrl}
+          src={hasImageError ? FALLBACK_CARD_IMAGE : resolvedPhotoUrl}
           alt={item.name}
           onError={() => setHasImageError(true)}
           className="h-40 w-full rounded-xl object-cover bg-gray-100"

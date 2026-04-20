@@ -1,8 +1,8 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { addToBucket } from '@/features/discovery/services/bucketService';
 import type { Place } from '@/features/discovery/types';
 import { useAuth } from '@/features/auth/AuthProvider';
-import { err, type BucketListUserData } from '@/types';
+import { err, ok, type BucketListUserData } from '@/types';
 import { AddToBucketModal } from '@/features/discovery/components/AddToBucketModal';
 
 const FALLBACK_CARD_IMAGE = 'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=800&q=80';
@@ -63,11 +63,13 @@ function DiscoveryCardBase({
     setError(null);
 
     const result = await addToBucket(tripId, place, addedBy, userData);
-    if (result.ok) {
+    if (result.ok || result.error?.includes('already')) {
       setIsAdded(true);
       onAdded?.(place);
+      setIsAdding(false);
+      return ok(undefined);
     } else {
-      setIsAdded(result.error.includes('already') ? true : false);
+      setIsAdded(false);
       setError(result.error);
     }
 
@@ -75,7 +77,9 @@ function DiscoveryCardBase({
     return result;
   };
 
-  const handleOpen = () => {
+  const handleOpen = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+
     if (isAdded || isAdding) {
       return;
     }
@@ -89,6 +93,12 @@ function DiscoveryCardBase({
     setIsModalOpen(true);
   };
 
+  const handleCardSelect = (event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, textarea, select, label')) return;
+    onCardClick?.();
+  };
+
   const active = isSelected || isHovered;
 
   return (
@@ -98,7 +108,7 @@ function DiscoveryCardBase({
       style={{ borderColor: isSelected ? 'var(--wb-ocean)' : isHovered ? 'var(--wb-ink-soft)' : '#f3f4f6', boxShadow: active ? 'var(--wb-shadow-md)' : undefined }}
       onMouseEnter={() => onHoverChange?.(true)}
       onMouseLeave={() => onHoverChange?.(false)}
-      onClick={onCardClick}
+      onClick={handleCardSelect}
     >
       <img
         src={hasImageError ? FALLBACK_CARD_IMAGE : place.photoUrl}
