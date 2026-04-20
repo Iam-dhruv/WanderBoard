@@ -1,11 +1,10 @@
-import { createContext, useContext, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { NavLink, Outlet, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
 import type { Trip, TripMember } from '@/types';
 import { getTrip, getTripMembers } from './tripService';
 import { useTripStore } from './useTripStore';
-import { WeatherDashboard } from '@/features/weather';
 import { useWeatherStore } from '@/features/weather';
 import { getCoordinatesFromCity, type Coordinates } from '@/features/weather/geocodingService';
 import { Avatar } from '@/components/Avatar';
@@ -31,8 +30,10 @@ export function useTripGeo(): TripGeoContextValue {
 
 const TABS = (tripId: string) => [
   { label: 'Plan',        to: ROUTES.tripPlanning(tripId) },
+  { label: 'Timeline',    to: ROUTES.tripTimeline(tripId) },
   { label: 'Bucket list', to: ROUTES.tripBucketList(tripId) },
   { label: 'Discover',    to: ROUTES.tripDiscovery(tripId) },
+  { label: 'Forecast',    to: ROUTES.tripWeather(tripId) },
   { label: 'Expenses',    to: ROUTES.tripExpenses(tripId) },
 ];
 
@@ -66,13 +67,42 @@ export function TripWorkspacePage() {
   }, [tripId, navigate, setActiveTrip, setMembers, resetWeather]);
 
   useEffect(() => {
-    if (!activeTrip?.destination) return;
+    if (!activeTrip) {
+      setGeo({ status: 'idle' });
+      return;
+    }
+
+    // Primary source: persisted destination coordinates from trip creation.
+    if (activeTrip.destinationLocation) {
+      setGeo({
+        status: 'ready',
+        coords: {
+          lat: activeTrip.destinationLocation.lat,
+          lon: activeTrip.destinationLocation.lng,
+          resolvedName: activeTrip.destinationPlaceName ?? activeTrip.destination,
+        },
+      });
+      return;
+    }
+
+    if (!activeTrip.destination) {
+      setGeo({ status: 'idle' });
+      return;
+    }
+
+    // Fallback for older trips without persisted destinationLocation.
     setGeo({ status: 'loading' });
     const primaryCity = activeTrip.destination.split(';')[0].trim();
-    getCoordinatesFromCity(primaryCity).then((result) => {
+    getCoordinatesFromCity(primaryCity, { placeId: activeTrip.destinationPlaceId }).then((result) => {
       setGeo(result.ok ? { status: 'ready', coords: result.data } : { status: 'error', message: result.error });
     });
-  }, [activeTrip?.destination]);
+  }, [
+    activeTrip,
+    activeTrip?.destination,
+    activeTrip?.destinationLocation,
+    activeTrip?.destinationPlaceId,
+    activeTrip?.destinationPlaceName,
+  ]);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
 
@@ -112,8 +142,19 @@ function WorkspaceShell({
 }) {
   const location = useLocation();
   const isDiscovery = location.pathname.includes('/discovery');
+  const isTimeline = location.pathname.includes('/timeline');
+  const isForecast = location.pathname.includes('/weather');
+  const hasCustomPanelHeader = isDiscovery || isTimeline || isForecast;
   const [rightPanelWidth, setRightPanelWidth] = useState(() => Math.floor(window.innerWidth * 0.5));
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+  const [mapReadyTick, setMapReadyTick] = useState(0);
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
+  const [isOffHomeCenter, setIsOffHomeCenter] = useState(false);
+
+  const homeCenter = useMemo(
+    () => (geo.status === 'ready' ? { lat: geo.coords.lat, lng: geo.coords.lon } : null),
+    [geo.status, geo.status === 'ready' ? geo.coords.lat : null, geo.status === 'ready' ? geo.coords.lon : null],
+  );
 
   const {
     mapRef, mapMarkers, selectedMarkerId, hoveredMarkerId, renderInfoWindow,
@@ -129,8 +170,48 @@ function WorkspaceShell({
   function handleMapLoad(map: google.maps.Map) {
     mapRef.current = map;
     setMapLoaded(true);
-    map.addListener('idle', () => setIdleTick((t) => t + 1));
+    setMapReadyTick((t) => t + 1);
   }
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const handleIdle = () => {
+      setIdleTick((t) => t + 1);
+
+      if (!homeCenter || !window.google?.maps?.geometry?.spherical) {
+        setIsOffHomeCenter(false);
+        return;
+      }
+
+      const center = map.getCenter();
+      if (!center) {
+        setIsOffHomeCenter(false);
+        return;
+      }
+
+      const homeLatLng = new window.google.maps.LatLng(homeCenter.lat, homeCenter.lng);
+      const distance = window.google.maps.geometry.spherical.computeDistanceBetween(center, homeLatLng);
+      setIsOffHomeCenter(distance > 250);
+    };
+
+    const listener = map.addListener('idle', handleIdle);
+    handleIdle();
+
+    return () => {
+      listener.remove();
+    };
+  }, [mapReadyTick, homeCenter, mapRef, setIdleTick]);
+
+  useEffect(() => {
+    if (!homeCenter) {
+      setIsOffHomeCenter(false);
+      return;
+    }
+    setRecenterTrigger((t) => t + 1);
+    setIsOffHomeCenter(false);
+  }, [homeCenter]);
 
   function handleMarkerClick(id: string) {
     setSelectedMarkerId(selectedMarkerId === id ? null : id);
@@ -260,8 +341,9 @@ function WorkspaceShell({
           }}
         >
           <MapView
-            center={geo.status === 'ready' ? { lat: geo.coords.lat, lng: geo.coords.lon } : undefined}
+            center={homeCenter ?? undefined}
             zoom={isDiscovery ? 13 : 11}
+            recenterTrigger={recenterTrigger}
             markers={displayMarkers}
             selectedMarkerId={selectedMarkerId ?? undefined}
             onMarkerClick={handleMarkerClick}
@@ -310,6 +392,24 @@ function WorkspaceShell({
               className="w-9 h-9 bg-white flex items-center justify-center text-lg font-bold border-t hover:bg-wb-paper-2 transition-colors"
               style={{ color: 'var(--wb-ink)', borderColor: 'var(--wb-line)' }}
             >−</button>
+            {geo.status === 'ready' && (
+              <button
+                onClick={() => {
+                  if (!homeCenter) return;
+                  mapRef.current?.panTo(homeCenter);
+                  mapRef.current?.setZoom(isDiscovery ? 13 : 11);
+                }}
+                className="w-9 h-9 bg-white flex items-center justify-center text-sm font-bold border-t hover:bg-wb-paper-2 transition-colors"
+                style={{
+                  color: 'var(--wb-ink)',
+                  borderColor: 'var(--wb-line)',
+                  opacity: isOffHomeCenter ? 1 : 0.55,
+                }}
+                title="Recenter on destination"
+              >
+                ◎
+              </button>
+            )}
           </div>
 
           {isRightPanelCollapsed && (
@@ -321,10 +421,6 @@ function WorkspaceShell({
               Show panel
             </button>
           )}
-
-          {/* Weather card */}
-          <GeoWeatherCard geo={geo} trip={activeTrip} />
-
           {/* Members panel */}
           <div
             className="absolute bottom-4 left-4 z-10 rounded-[14px] p-3 w-[220px]"
@@ -364,7 +460,7 @@ function WorkspaceShell({
           style={{ background: 'var(--wb-paper)', width: rightPanelWidth, maxWidth: '50vw' }}
         >
           {/* Header — hidden for Discovery (it renders its own) */}
-          {!isDiscovery && (
+          {!hasCustomPanelHeader && (
             <div className="px-6 pt-5 pb-3 flex-shrink-0" style={{ borderBottom: '1px solid var(--wb-line)' }}>
               <div className="flex items-center justify-between">
                 <h2
@@ -392,7 +488,7 @@ function WorkspaceShell({
           )}
 
           {/* Scrollable content — Discovery manages its own scroll */}
-          <div className={isDiscovery ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto'}>
+          <div className={hasCustomPanelHeader ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto'}>
             <Outlet />
           </div>
         </div>
@@ -404,249 +500,6 @@ function WorkspaceShell({
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
-
-function GeoWeatherCard({ geo, trip }: { geo: GeoState; trip: { startDate: string; endDate: string; destination: string } }) {
-  const MIN_WIDTH_RATIO = 0.22;
-  const MAX_WIDTH_RATIO = 0.62;
-  const MIN_HEIGHT_RATIO = 0.26;
-  const MAX_HEIGHT_RATIO = 0.78;
-  const ABS_MIN_WIDTH = 240;
-  const ABS_MAX_WIDTH = 900;
-  const ABS_MIN_HEIGHT = 190;
-  const ABS_MAX_HEIGHT = 820;
-  const HEADER_HEIGHT = 42;
-  const TOP_BOUND = 20;
-  const BOTTOM_BOUND = 180;
-
-  function getViewportSize() {
-    return {
-      width: Math.round(window.visualViewport?.width ?? window.innerWidth),
-      height: Math.round(window.visualViewport?.height ?? window.innerHeight),
-    };
-  }
-
-  function resolveBounds(preferredMin: number, preferredMax: number, available: number) {
-    const safeAvailable = Math.max(140, Math.floor(available));
-    const min = Math.min(preferredMin, safeAvailable);
-    const max = Math.max(min, Math.min(preferredMax, safeAvailable));
-    return { min, max };
-  }
-
-  function fitPanelToViewport(next: { x: number; y: number; width: number; height: number; collapsed: boolean }) {
-    const viewport = getViewportSize();
-    const widthBounds = resolveBounds(
-      clamp(Math.round(viewport.width * MIN_WIDTH_RATIO), ABS_MIN_WIDTH, ABS_MAX_WIDTH),
-      clamp(Math.round(viewport.width * MAX_WIDTH_RATIO), ABS_MIN_WIDTH, ABS_MAX_WIDTH),
-      viewport.width - 16,
-    );
-    const heightBounds = resolveBounds(
-      clamp(Math.round(viewport.height * MIN_HEIGHT_RATIO), ABS_MIN_HEIGHT, ABS_MAX_HEIGHT),
-      clamp(Math.round(viewport.height * MAX_HEIGHT_RATIO), ABS_MIN_HEIGHT, ABS_MAX_HEIGHT),
-      viewport.height - TOP_BOUND - BOTTOM_BOUND,
-    );
-
-    const width = clamp(next.width, widthBounds.min, widthBounds.max);
-    const height = clamp(next.height, heightBounds.min, heightBounds.max);
-    const visibleHeight = next.collapsed ? HEADER_HEIGHT : height;
-
-    return {
-      ...next,
-      width,
-      height,
-      x: clamp(next.x, 8, Math.max(8, viewport.width - width - 8)),
-      y: clamp(next.y, TOP_BOUND, Math.max(TOP_BOUND, viewport.height - visibleHeight - BOTTOM_BOUND)),
-    };
-  }
-
-  const [panel, setPanel] = useState(() => {
-    return fitPanelToViewport({
-      x: window.innerWidth - 404,
-      y: window.innerHeight - 580,
-      width: 380,
-      height: 540,
-      collapsed: false,
-    });
-  });
-  const [interaction, setInteraction] = useState<'idle' | 'dragging' | 'resizing'>('idle');
-
-  useEffect(() => {
-    const handleViewportResize = () => {
-      setPanel((prev) => fitPanelToViewport(prev));
-    };
-
-    window.addEventListener('resize', handleViewportResize);
-    window.visualViewport?.addEventListener('resize', handleViewportResize);
-    window.visualViewport?.addEventListener('scroll', handleViewportResize);
-
-    return () => {
-      window.removeEventListener('resize', handleViewportResize);
-      window.visualViewport?.removeEventListener('resize', handleViewportResize);
-      window.visualViewport?.removeEventListener('scroll', handleViewportResize);
-    };
-  }, []);
-
-  function startPanelDrag(event: ReactMouseEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).closest('button')) return;
-    event.preventDefault();
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const originX = panel.x;
-    const originY = panel.y;
-
-    setInteraction('dragging');
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-
-      setPanel((prev) =>
-        fitPanelToViewport({
-          ...prev,
-          x: originX + deltaX,
-          y: originY + deltaY,
-        }),
-      );
-    };
-
-    const handleMouseUp = () => {
-      setInteraction('idle');
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }
-
-  function startPanelResize(event: ReactMouseEvent<HTMLDivElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const originWidth = panel.width;
-    const originHeight = panel.height;
-
-    setInteraction('resizing');
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-
-      setPanel((prev) =>
-        fitPanelToViewport({
-          ...prev,
-          collapsed: false,
-          width: originWidth + deltaX,
-          height: originHeight + deltaY,
-        }),
-      );
-    };
-
-    const handleMouseUp = () => {
-      setInteraction('idle');
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }
-
-  if (geo.status === 'idle' || geo.status === 'loading') {
-    return (
-      <div
-        className="absolute bottom-4 right-4 z-10 rounded-[16px] p-4 w-[200px] flex items-center gap-2 text-xs"
-        style={{ background: '#fff', border: '1.5px solid var(--wb-line)', boxShadow: 'var(--wb-shadow-md)', color: 'var(--wb-ink-soft)' }}
-      >
-        <svg className="animate-spin w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
-          <path fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" opacity="0.75" />
-        </svg>
-        Locating {trip.destination.split(';')[0]}…
-      </div>
-    );
-  }
-  if (geo.status === 'error') return null;
-
-  return (
-    <div
-      className="absolute z-10 rounded-[16px] overflow-hidden"
-      style={{
-        left: panel.x,
-        top: panel.y,
-        width: panel.width,
-        height: panel.collapsed ? HEADER_HEIGHT : panel.height,
-        background: 'rgba(255,255,255,0.98)',
-        border: '1.5px solid var(--wb-line)',
-        boxShadow: 'var(--wb-shadow-md)',
-        backdropFilter: 'blur(3px)',
-        cursor: interaction === 'dragging' ? 'grabbing' : 'default',
-        userSelect: interaction === 'idle' ? 'auto' : 'none',
-      }}
-    >
-      <div
-        onMouseDown={startPanelDrag}
-        className="h-[42px] px-3 flex items-center justify-between"
-        style={{
-          background: 'linear-gradient(180deg, #F7FBFF 0%, #EEF5FB 100%)',
-          borderBottom: panel.collapsed ? 'none' : '1px solid var(--wb-line)',
-          cursor: interaction === 'dragging' ? 'grabbing' : 'grab',
-        }}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--wb-ocean)' }}>
-            Weather Dashboard
-          </span>
-          <span className="text-[11px] truncate" style={{ color: 'var(--wb-ink-soft)' }}>
-            {trip.destination.split(';')[0]}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setPanel((prev) => fitPanelToViewport({ ...prev, collapsed: !prev.collapsed }))}
-            className="h-6 px-2 rounded-md text-[10px] font-semibold"
-            style={{ background: 'var(--wb-paper-2)', color: 'var(--wb-ink-soft)', border: '1px solid var(--wb-line)' }}
-          >
-            {panel.collapsed ? 'Restore' : 'Minimize'}
-          </button>
-        </div>
-      </div>
-
-      {!panel.collapsed && (
-        <>
-          <div style={{ height: `calc(100% - ${HEADER_HEIGHT}px)`, overflow: 'auto' }}>
-            <WeatherDashboard
-              lat={geo.coords.lat}
-              lon={geo.coords.lon}
-              startDate={trip.startDate}
-              endDate={trip.endDate}
-            />
-          </div>
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            onMouseDown={startPanelResize}
-            className="absolute bottom-1.5 right-1.5 w-5 h-5 rounded-md border"
-            style={{
-              cursor: 'nwse-resize',
-              background: 'repeating-linear-gradient(135deg, var(--wb-line), var(--wb-line) 2px, transparent 2px, transparent 4px)',
-              borderColor: 'var(--wb-line)',
-              opacity: interaction === 'resizing' ? 1 : 0.75,
-            }}
-            title="Resize panel"
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 function MemberRow({ member, isCurrentUser }: { member: TripMember; isCurrentUser: boolean }) {
   return (

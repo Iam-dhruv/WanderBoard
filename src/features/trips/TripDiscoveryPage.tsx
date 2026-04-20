@@ -251,6 +251,48 @@ export function TripDiscoveryPage() {
     };
   }, [geo.status, idleTick, isLoaded, normalizedQuery, executeNearbySearch, mapRef]);
 
+  // Initial search once map bounds are ready (without requiring manual map interaction)
+  useEffect(() => {
+    if (geo.status !== 'ready' || !isLoaded || hasSearched) return;
+
+    let attempts = 0;
+    let timer: number | null = null;
+    let cancelled = false;
+
+    const schedule = (delay: number) => {
+      timer = window.setTimeout(run, delay);
+    };
+
+    const run = () => {
+      if (cancelled) return;
+
+      const map = mapRef.current;
+      const readyForSearch = Boolean(
+        map &&
+        map.getBounds() &&
+        window.google?.maps?.places &&
+        window.google?.maps?.geometry,
+      );
+
+      if (readyForSearch) {
+        executeNearbySearch();
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 30) {
+        schedule(150);
+      }
+    };
+
+    schedule(0);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [geo.status, isLoaded, hasSearched, executeNearbySearch, mapRef]);
+
   useEffect(() => () => {
     if (debounceTimerRef.current !== null) window.clearTimeout(debounceTimerRef.current);
   }, []);

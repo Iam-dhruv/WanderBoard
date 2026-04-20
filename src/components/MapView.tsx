@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { GoogleMap, InfoWindow, Marker, useJsApiLoader } from '@react-google-maps/api';
 import type { Libraries } from '@react-google-maps/api';
 
@@ -28,6 +28,8 @@ export interface MapViewProps {
   /** Undefined while geocoding — shows skeleton instead of map */
   center?:           { lat: number; lng: number };
   zoom?:             number;
+  /** Bump this value to pan the map back to center */
+  recenterTrigger?:  number;
   markers?:          MapMarker[];
   selectedMarkerId?: string;
   onMarkerClick?:    (markerId: string) => void;
@@ -59,6 +61,7 @@ function createPinIcon(color: string, highlighted: boolean): google.maps.Icon {
 export function MapView({
   center,
   zoom = 12,
+  recenterTrigger,
   markers = [],
   selectedMarkerId,
   onMarkerClick,
@@ -74,6 +77,34 @@ export function MapView({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
     libraries:        MAP_LIBRARIES,
   });
+
+  const mapInstanceRef = useRef<google.maps.Map | null>(null);
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | undefined>(center);
+
+  useEffect(() => {
+    if (!mapCenter && center) {
+      setMapCenter(center);
+    }
+  }, [mapCenter, center]);
+
+  useEffect(() => {
+    if (!center) return;
+    setMapCenter(center);
+    mapInstanceRef.current?.panTo(center);
+  }, [recenterTrigger, center]);
+
+  function syncCenterFromMap() {
+    const current = mapInstanceRef.current?.getCenter();
+    if (!current) return;
+    const next = { lat: current.lat(), lng: current.lng() };
+    setMapCenter((prev) => {
+      if (!prev) return next;
+      if (Math.abs(prev.lat - next.lat) < 0.0000001 && Math.abs(prev.lng - next.lng) < 0.0000001) {
+        return prev;
+      }
+      return next;
+    });
+  }
 
   if (loadError) {
     return (
@@ -96,10 +127,19 @@ export function MapView({
     <GoogleMap
       mapContainerStyle={style}
       mapContainerClassName={className}
-      center={center}
+      center={mapCenter ?? center}
       zoom={zoom}
-      onLoad={onLoad}
-      onUnmount={onUnmount}
+      onLoad={(map) => {
+        mapInstanceRef.current = map;
+        onLoad?.(map);
+      }}
+      onUnmount={() => {
+        mapInstanceRef.current = null;
+        onUnmount?.();
+      }}
+      onDragEnd={syncCenterFromMap}
+      onZoomChanged={syncCenterFromMap}
+      onIdle={syncCenterFromMap}
       options={{
         streetViewControl: false,
         mapTypeControl:    false,

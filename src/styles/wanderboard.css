@@ -314,3 +314,13 @@ body {
     radial-gradient(circle at 20% 20%, rgba(232,93,47,0.05), transparent 40%),
     radial-gradient(circle at 80% 60%, rgba(14,107,168,0.05), transparent 45%);
 }
+
+/* Hide Google Maps ghost InfoWindow shells that have no rendered content. */
+.gm-style .gm-style-iw-c:has(.gm-style-iw-d:empty) {
+  display: none !important;
+}
+
+/* Also hide the default InfoWindow tip for the same empty shell case. */
+.gm-style .gm-style-iw-c:has(.gm-style-iw-d:empty) + div {
+  display: none !important;
+}

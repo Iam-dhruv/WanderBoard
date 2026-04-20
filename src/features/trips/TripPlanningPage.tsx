@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ROUTES } from '@/config/routes';
 import { useTripStore } from './useTripStore';
 import { subscribeTimeline } from '@/features/timeline/timelineService';
 import type { TimelineEvent } from '@/types';
@@ -43,9 +41,6 @@ export function TripPlanningPage() {
           <p className="text-sm font-medium mb-3" style={{ color: 'var(--wb-ink-soft)' }}>
             Set trip dates to see your day-by-day plan.
           </p>
-          <Link to={ROUTES.tripTimeline(activeTrip.id)} className="wb-btn wb-btn-primary wb-btn-sm">
-            Open full timeline →
-          </Link>
         </div>
       ) : (
         <>
@@ -64,15 +59,6 @@ export function TripPlanningPage() {
               </DayCard>
             );
           })}
-
-          <div className="mt-2 pb-4 text-center">
-            <Link
-              to={ROUTES.tripTimeline(activeTrip.id)}
-              className="wb-btn wb-btn-ghost wb-btn-sm"
-            >
-              Open full timeline with drag-drop →
-            </Link>
-          </div>
         </>
       )}
     </div>
