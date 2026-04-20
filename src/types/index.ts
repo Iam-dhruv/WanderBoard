@@ -8,6 +8,8 @@ export interface Trip {
   id: string;
   name: string;
   destination: string;
+  destinationCities?: TripDestinationCity[];
+  selectedDestinationCity?: string;
   destinationLocation?: BucketListLocation;
   destinationPlaceId?: string;
   destinationPlaceName?: string;
@@ -43,6 +45,12 @@ export type VoteValue = -1 | 0 | 1;
 export interface BucketListLocation {
   lat: number;
   lng: number;
+}
+
+export interface TripDestinationCity {
+  name: string;
+  placeId?: string;
+  location?: BucketListLocation;
 }
 
 export interface BucketListWeather {
