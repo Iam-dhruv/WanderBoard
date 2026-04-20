@@ -23,11 +23,28 @@ interface MiniWeatherCardProps {
   lon?: number;
   /** Optional place name fallback when coordinates are not available. */
   placeName?: string;
+  /** Optional activity type used to evaluate weather suitability. */
+  activityType?: string;
+  /** Optional callback for parent components that need weather suitability flags. */
+  onSuitabilityChange?: (suitability: WeatherSuitability | null) => void;
+}
+
+export interface WeatherSuitability {
+  level: 'clear' | 'caution' | 'alert';
+  message: string;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export function MiniWeatherCard({ placeName, tripDate, forecastLabel, lat, lon }: MiniWeatherCardProps) {
+export function MiniWeatherCard({
+  placeName,
+  tripDate,
+  forecastLabel,
+  lat,
+  lon,
+  activityType,
+  onSuitabilityChange,
+}: MiniWeatherCardProps) {
   const [state, setState] = useState<MiniWeatherState>({ status: 'idle' });
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -83,6 +100,15 @@ export function MiniWeatherCard({ placeName, tripDate, forecastLabel, lat, lon }
     void resolve();
     return () => { cancelled = true; };
   }, [lat, lon, placeName, tripDate]);
+
+  const suitability = state.status === 'ready'
+    ? evaluateWeatherSuitability(state.data, activityType)
+    : null;
+
+  useEffect(() => {
+    if (!onSuitabilityChange) return;
+    onSuitabilityChange(suitability);
+  }, [onSuitabilityChange, suitability?.level, suitability?.message]);
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (state.status === 'idle' || state.status === 'loading') {
@@ -149,8 +175,20 @@ export function MiniWeatherCard({ placeName, tripDate, forecastLabel, lat, lon }
           aria-hidden
         />
         <span>{capitalise(data.description)}</span>
-        {isRainy && <span className="text-red-700">Outdoor plans may be affected.</span>}
+        {isRainy && <span className="text-red-700">Outdoor activity may be impacted.</span>}
       </div>
+
+      {activityType && suitability && suitability.level !== 'clear' && (
+        <div
+          className={`mt-2 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${
+            suitability.level === 'alert'
+              ? 'border-red-200 bg-red-100 text-red-700'
+              : 'border-amber-200 bg-amber-100 text-amber-700'
+          }`}
+        >
+          ⚠ {suitability.message}
+        </div>
+      )}
 
       {isExpanded && (
         <>
@@ -205,6 +243,56 @@ function getRainSeverity(probability: number): string {
   if (probability >= 60) return 'High rain risk';
   if (probability >= 30) return 'Moderate rain risk';
   return 'Low rain risk';
+}
+
+function evaluateWeatherSuitability(data: WeatherData, activityType?: string): WeatherSuitability {
+  const rain = data.precipitationProbability;
+  const wind = data.windSpeed;
+  const temp = data.temperature;
+  const activityLabel = activityType?.trim() || 'activity';
+  const isOutdoor = isLikelyOutdoorActivity(activityType);
+
+  if (rain >= 85 || wind >= 14) {
+    return {
+      level: 'alert',
+      message: `${activityLabel}: High weather risk`,
+    };
+  }
+
+  if (isOutdoor) {
+    if (rain >= 55 || wind >= 10 || temp >= 38 || temp <= 0) {
+      return {
+        level: 'alert',
+        message: `${activityLabel}: Conditions not suitable`,
+      };
+    }
+
+    if (rain >= 35 || wind >= 7 || temp >= 33 || temp <= 5) {
+      return {
+        level: 'caution',
+        message: `${activityLabel}: Proceed with caution`,
+      };
+    }
+  }
+
+  if (rain >= 70 || wind >= 12 || temp >= 40 || temp <= -2) {
+    return {
+      level: 'caution',
+      message: `${activityLabel}: Weather may affect plans`,
+    };
+  }
+
+  return {
+    level: 'clear',
+    message: `Conditions look suitable for ${activityLabel}.`,
+  };
+}
+
+function isLikelyOutdoorActivity(activityType?: string): boolean {
+  if (!activityType) return true;
+  const value = activityType.trim().toLowerCase();
+  if (!value) return true;
+  return /(outdoor|hike|trek|trail|walk|ride|bike|cycling|camp|viewpoint|waterfall|beach|adventure|photo|photography|nature|park|rafting|kayak|ski|sightseeing)/.test(value);
 }
 
 function getWindBand(windSpeed: number): string {

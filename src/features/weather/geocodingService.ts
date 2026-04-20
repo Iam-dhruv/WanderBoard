@@ -20,6 +20,11 @@ export interface GeocodingHints {
 // avoids re-geocoding the same city when navigating between trips.
 
 const cache = new Map<string, Coordinates>();
+const IntlAny = Intl as any;
+const regionDisplayNames: { of: (code: string) => string | undefined } | null =
+  typeof IntlAny !== 'undefined' && typeof IntlAny.DisplayNames === 'function'
+    ? new IntlAny.DisplayNames(['en'], { type: 'region' })
+    : null;
 
 function cacheKey(destination: string, hints?: GeocodingHints): string {
   return [
@@ -53,6 +58,34 @@ function normalizeCountryCode(value: string | undefined): string {
   if (aliases[raw]) return aliases[raw];
   if (raw.length === 2) return raw;
   return raw;
+}
+
+function getCountryNameFromCode(value: string): string {
+  if (!regionDisplayNames) return '';
+  const code = normalizeAlpha(value);
+  if (code.length !== 2) return '';
+
+  try {
+    const name = regionDisplayNames.of(code);
+    return normalizeAlpha(name);
+  } catch {
+    return '';
+  }
+}
+
+function countryMatchesExpected(expectedCountry: string, candidateCountry: string): boolean {
+  if (!expectedCountry) return true;
+
+  const expected = normalizeCountryCode(expectedCountry);
+  const candidate = normalizeCountryCode(candidateCountry);
+
+  if (!expected || !candidate) return false;
+  if (expected === candidate) return true;
+
+  const expectedName = expected.length === 2 ? getCountryNameFromCode(expected) : expected;
+  const candidateName = candidate.length === 2 ? getCountryNameFromCode(candidate) : candidate;
+
+  return Boolean(expectedName && candidateName && expectedName === candidateName);
 }
 
 function normalizeState(value: string | undefined): string {
@@ -106,7 +139,7 @@ function pickBestCandidate(
   expectedState?: string,
 ): Result<OpenWeatherGeocodeResult> {
   if (candidates.length === 0) {
-    return err('No matching geocoding candidates were returned.');
+    return err('No matching location candidates found.');
   }
 
   const country = normalizeCountryCode(expectedCountry);
@@ -114,9 +147,9 @@ function pickBestCandidate(
 
   let next = candidates;
   if (country) {
-    const countryMatches = next.filter((candidate) => normalizeCountryCode(candidate.country) === country);
+    const countryMatches = next.filter((candidate) => countryMatchesExpected(country, candidate.country));
     if (countryMatches.length === 0) {
-      return err('Geocoding mismatch: resolved location did not match the expected country.');
+      return err('Resolved location does not match the selected country.');
     }
     next = countryMatches;
   }
@@ -128,7 +161,7 @@ function pickBestCandidate(
     } else {
       const hasStateData = next.some((candidate) => Boolean(candidate.state));
       if (hasStateData) {
-        return err('Geocoding mismatch: resolved location did not match the expected state/region.');
+        return err('Resolved location does not match the selected state/region.');
       }
     }
   }
@@ -249,7 +282,7 @@ export async function getCoordinatesFromCity(
     if (!candidate.ok) {
       return err(
         `${candidate.error} ` +
-        `Please use a more specific destination (e.g. "City, State, Country").`
+        `Try a more specific destination (e.g. "City, Country").`
       );
     }
 

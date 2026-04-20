@@ -42,19 +42,47 @@ interface BucketItemLoc {
   id: string;
   location?: { lat: number; lng: number };
   name?: string;
+  address?: string;
+  userData?: {
+    proposedDate?: string;
+    proposedTime?: string;
+    activityType?: string;
+  };
+}
+
+function normalizeLocation(raw: any): { lat: number; lng: number } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+
+  const latRaw = typeof raw.lat === 'function' ? raw.lat() : (raw.lat ?? raw.latitude);
+  const lngRaw = typeof raw.lng === 'function' ? raw.lng() : (raw.lng ?? raw.longitude);
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  return { lat, lng };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getDatesInRange(startDate: string, endDate: string): string[] {
+  const startMatch = startDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const endMatch = endDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!startMatch || !endMatch) return [];
+
   const dates: string[] = [];
-  const current = new Date(startDate);
-  const end = new Date(endDate);
+  const current = new Date(Number(startMatch[1]), Number(startMatch[2]) - 1, Number(startMatch[3]));
+  const end = new Date(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+
   if (isNaN(current.getTime()) || isNaN(end.getTime()) || current > end) return [];
+
   while (current <= end) {
-    dates.push(current.toISOString().slice(0, 10));
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, '0');
+    const d = String(current.getDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
     current.setDate(current.getDate() + 1);
   }
+
   return dates;
 }
 
@@ -130,15 +158,27 @@ export function TimelinePage() {
       setBucketItems(
         snap.docs.map((d) => {
           const data = d.data();
+          const userData = data.userData ?? {};
           return {
             id:       d.id,
-            location: data.location ?? undefined,
+            location: normalizeLocation(data.location),
             name:     data.name ?? undefined,
+            address:  data.address ?? undefined,
+            userData: {
+              proposedDate: typeof userData.proposedDate === 'string' ? userData.proposedDate : undefined,
+              proposedTime: typeof userData.proposedTime === 'string' ? userData.proposedTime : undefined,
+              activityType: typeof userData.activityType === 'string' ? userData.activityType : undefined,
+            },
           };
         }),
       );
     });
   }, [activeTrip]);
+
+  const bucketMetaById = useMemo(
+    () => new Map(bucketItems.map((item) => [item.id, item])),
+    [bucketItems],
+  );
 
   // Push calendar event markers to the map based on expanded/selected day
   useEffect(() => {
@@ -447,6 +487,7 @@ export function TimelinePage() {
               events={events}
               expandedDay={expandedDay}
               onToggleDay={handleToggleDay}
+              bucketMetaById={bucketMetaById}
             />
           ) : (
             // Single day: drag-drop scheduling grid

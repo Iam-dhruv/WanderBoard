@@ -66,9 +66,9 @@ export function WeatherDashboard({ lat, lon, startDate, endDate }: WeatherDashbo
         >
           <span className="mt-0.5 text-base" style={{ color: 'var(--wb-sunset)' }}>⚠</span>
           <div>
-            <p className="text-sm font-semibold" style={{ color: 'var(--wb-sunset)' }}>Rain expected: Outdoor caution</p>
+            <p className="text-sm font-semibold" style={{ color: 'var(--wb-sunset)' }}>Rain advisory</p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--wb-sunset)', opacity: 0.8 }}>
-              Rain chance is {weather.precipitationProbability}% on {formatDayFull(selectedDate)}. Consider moving outdoor plans indoors.
+              {weather.precipitationProbability}% rain chance on {formatDayFull(selectedDate)}. Consider indoor alternatives.
             </p>
           </div>
         </div>
