@@ -103,7 +103,6 @@ WanderBoard fixes all of that:
 - **Smart conflict resolution** — Drop two overlapping activities and the system auto-shifts things around (no manual rescheduling)
 - **Built-in travel time** — 15-minute buffer between activities so people actually have time to get places
 - **Golden hour aware** — Automatically warns if you're scheduling a sunset photo session at the wrong time
-- **Realistic hours** — Won't let you schedule activities from 2 AM to 5 AM (because nobody plans that)
 
 ### 3. Watch Out for Weather
 - **Rain forecasts** — Automatically flags outdoor activities if there's more than a 20% chance of rain
@@ -384,9 +383,12 @@ Let an LLM suggest whole itineraries based on what your group likes
 ## 👥 Team & Contributing
 
 ### Who Built This
-- **Dhruv & Keshav** — Made sure all the APIs talk to each other correctly
-- **Bhoomika & Garima** — Made it actually look good
-- **Dakshata & Naivadhya** — Wrote the scheduling and expense algorithms
+- **Dhruv** — Designed the whole UI/UX along with frontend and backend firestore integration
+- **Keshav** — Designed the whole google maps integration systemn 
+- **Dakshata** — Worked on the discovery engine ,designed and made with visually appealing
+- **Garima** — built the whole core bucket list functionality with drag and drop
+- **Naivadhya** — Built the whole expense tracking and settlement algorithm
+- **Bhoomika** —Worked on the weather API along with smart contingency flagging
 
 ### Want to Help?
 
@@ -471,4 +473,4 @@ Check the docs folder (PROJECT_OVERVIEW.txt has everything), open a GitHub issue
 
 **Made by Group 9 @ IIT Roorkee CSC 206**
 ---
-***Bhoomika Chourasiya    |    Dakshata Aggrawal   |   Dhruv Aggarwal   |   Keshav Dharni   |   Naivadhya Garg   |   Garima***
+***Bhoomika Chourasiya  |  Dakshata Aggrawal  |  Dhruv Aggarwal  |  Keshav Dharni  |  Naivadhya Garg  |  Garima***
