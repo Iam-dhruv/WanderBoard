@@ -181,6 +181,7 @@ interface TimelineGridProps {
   currentUserId: string;
   draggingBucketItem: BucketItem | null;
   draggingExistingEvent: TimelineEvent | null;
+  onExistingEventDragStart: (event: TimelineEvent) => void;
   onDragEnd: () => void;
   onToast: (msg: string, type: 'success' | 'error' | 'warn') => void;
   onOpenCreateModal: (date: string, startTime: string) => void;
@@ -196,6 +197,7 @@ export function TimelineGrid({
   currentUserId,
   draggingBucketItem,
   draggingExistingEvent,
+  onExistingEventDragStart,
   onDragEnd,
   onToast,
   onOpenCreateModal,
@@ -521,6 +523,7 @@ export function TimelineGrid({
             onDrop={handleDrop}
             onDelete={handleDelete}
             onResizeEnd={handleResizeEnd}
+            onExistingEventDragStart={onExistingEventDragStart}
             onDragEndEvent={onDragEnd}
             onClickSlot={
               isOwner
@@ -546,6 +549,7 @@ interface DayColumnProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>, date: string, slotMinute: number) => void;
   onDelete: (eventId: string) => void;
   onResizeEnd: (eventId: string, newDurationMinutes: number) => void;
+  onExistingEventDragStart: (event: TimelineEvent) => void;
   onDragEndEvent: () => void;
   onClickSlot?: (date: string, startTime: string) => void;
 }
@@ -560,6 +564,7 @@ function DayColumn({
   onDrop,
   onDelete,
   onResizeEnd,
+  onExistingEventDragStart,
   onDragEndEvent,
   onClickSlot,
 }: DayColumnProps) {
@@ -712,7 +717,8 @@ function DayColumn({
                 event={ev}
                 isOwner={isOwner}
                 onDelete={onDelete}
-                onDragStart={onDragEndEvent}
+                onDragStart={onExistingEventDragStart}
+                onDragEnd={onDragEndEvent}
                 onResizeEnd={onResizeEnd}
               />
             </div>
