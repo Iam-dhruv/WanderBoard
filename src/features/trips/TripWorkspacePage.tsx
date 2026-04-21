@@ -12,6 +12,9 @@ import { MapView } from '@/components/MapView';
 import { TripMapProvider, useTripMap } from './TripMapContext';
 import { WorkspaceFeaturePanel } from './WorkspaceFeaturePanel';
 import { useWorkspacePanelStore, type WorkspacePanelKey } from './useWorkspacePanelStore';
+import { db } from '@/config/firebase';
+import { collection, onSnapshot, query } from 'firebase/firestore';
+import type { TimelineEvent } from '@/types';
 
 // ─── Geocoding context (destination lat/lon for weather + initial map centre) ──
 
@@ -114,6 +117,18 @@ function routeForPanelKey(tripId: string, key: WorkspacePanelKey): string {
   return (panel ?? PANEL_CONFIG[0]).route(tripId);
 }
 
+function normalizeMapLocation(raw: any): { lat: number; lng: number } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+
+  const latRaw = typeof raw.lat === 'function' ? raw.lat() : (raw.lat ?? raw.latitude);
+  const lngRaw = typeof raw.lng === 'function' ? raw.lng() : (raw.lng ?? raw.longitude);
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  return { lat, lng };
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export function TripWorkspacePage() {
@@ -128,6 +143,11 @@ export function TripWorkspacePage() {
   useEffect(() => {
     let cancelled = false;
     if (!tripId) { navigate(ROUTES.DASHBOARD, { replace: true }); return; }
+
+    // Clear stale trip content when switching trip ids.
+    setActiveTrip(null);
+    resetWeather();
+
     Promise.all([getTrip(tripId), getTripMembers(tripId)]).then(
       ([tripResult, membersResult]) => {
         if (cancelled) return;
@@ -138,8 +158,6 @@ export function TripWorkspacePage() {
     );
     return () => {
       cancelled = true;
-      setActiveTrip(null);
-      resetWeather();
     };
   }, [tripId, navigate, setActiveTrip, setMembers, resetWeather]);
 
@@ -222,6 +240,7 @@ function WorkspaceShell({
   const {
     openPanels,
     activePanelKey,
+    resetForRoute,
     setFromRoute,
     togglePanel,
     focusPanel,
@@ -231,6 +250,7 @@ function WorkspaceShell({
   } = useWorkspacePanelStore((s) => ({
     openPanels: s.openPanels,
     activePanelKey: s.activePanelKey,
+    resetForRoute: s.resetForRoute,
     setFromRoute: s.setFromRoute,
     togglePanel: s.togglePanel,
     focusPanel: s.focusPanel,
@@ -260,9 +280,12 @@ function WorkspaceShell({
   );
 
   useEffect(() => {
-    if (openPanels.length === 0) return;
+    resetForRoute(routePanelKey);
+  }, [activeTrip.id, routePanelKey, resetForRoute]);
+
+  useEffect(() => {
     setFromRoute(routePanelKey);
-  }, [routePanelKey, setFromRoute, openPanels.length]);
+  }, [location.pathname, routePanelKey, setFromRoute]);
 
   const fallbackHomeCenter = useMemo(
     () => (geo.status === 'ready' ? { lat: geo.coords.lat, lng: geo.coords.lon } : null),
@@ -273,8 +296,59 @@ function WorkspaceShell({
 
   const {
     mapRef, mapMarkers, selectedMarkerId, hoveredMarkerId, renderInfoWindow,
-    setMapLoaded, setIdleTick, setSelectedMarkerId,
+    setMapLoaded, setIdleTick, setSelectedMarkerId, setMapMarkers, setRenderInfoWindow,
   } = useTripMap();
+
+  useEffect(() => {
+    if (openPanels.length > 0) return;
+
+    let timelineEvents: TimelineEvent[] = [];
+    let bucketPlaces = new Map<string, { name: string; location: { lat: number; lng: number } }>();
+
+    const pushMarkers = () => {
+      const markers = timelineEvents
+        .filter((event) => event.bucketItemId && bucketPlaces.has(event.bucketItemId))
+        .map((event) => {
+          const place = bucketPlaces.get(event.bucketItemId!);
+          return {
+            id: event.id,
+            position: place!.location,
+            title: place!.name || event.title,
+            color: event.color,
+          };
+        });
+
+      setMapMarkers(markers);
+      setRenderInfoWindow(null);
+    };
+
+    const timelineQuery = query(collection(db, 'trips', activeTrip.id, 'timeline'));
+    const bucketQuery = query(collection(db, 'trips', activeTrip.id, 'bucketList'));
+
+    const unsubTimeline = onSnapshot(timelineQuery, (snapshot) => {
+      timelineEvents = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as TimelineEvent));
+      pushMarkers();
+    });
+
+    const unsubBucket = onSnapshot(bucketQuery, (snapshot) => {
+      bucketPlaces = new Map(
+        snapshot.docs
+          .map((docSnap) => {
+            const data = docSnap.data();
+            const location = normalizeMapLocation(data.location);
+            if (!location) return null;
+            return [docSnap.id, { name: data.name ?? '', location }] as const;
+          })
+          .filter((entry): entry is readonly [string, { name: string; location: { lat: number; lng: number } }] => entry !== null),
+      );
+      pushMarkers();
+    });
+
+    return () => {
+      unsubTimeline();
+      unsubBucket();
+    };
+  }, [openPanels.length, activeTrip.id, setMapMarkers, setRenderInfoWindow]);
 
   // Markers with highlighted state computed here (not stored in context)
   const displayMarkers = mapMarkers.map((m) => ({
@@ -460,7 +534,6 @@ function WorkspaceShell({
 
   function handleCloseAllPanels() {
     closeAll();
-    navigate(routeForPanelKey(activeTrip.id, 'planning'));
   }
 
   return (
@@ -549,8 +622,6 @@ function WorkspaceShell({
           >
             Close all panels
           </button>
-          <button className="wb-btn wb-btn-ghost wb-btn-sm">Share</button>
-          <button className="wb-btn wb-btn-accent wb-btn-sm">Publish itinerary</button>
         </div>
       </div>
 

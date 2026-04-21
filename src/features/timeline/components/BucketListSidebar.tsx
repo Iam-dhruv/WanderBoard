@@ -25,6 +25,8 @@ export interface BucketItem {
   rating: number;
   photoUrl: string;
   placeId: string;
+  upvotes: number;
+  downvotes: number;
   durationMinutes?: number;
 }
 
@@ -59,6 +61,8 @@ export function BucketListSidebar({
           return {
             id: d.id,
             ...data,
+            upvotes: typeof data.upvotes === 'number' ? data.upvotes : 0,
+            downvotes: typeof data.downvotes === 'number' ? data.downvotes : 0,
             durationMinutes:
               typeof data.userData?.durationMinutes === 'number'
                 ? data.userData.durationMinutes
@@ -243,6 +247,12 @@ function BucketCard({
                 ★ {item.rating.toFixed(1)}
               </span>
             )}
+            <span style={{ fontSize: 10, color: 'var(--wb-forest)', background: '#E8F3EC', border: '1px solid #BFDCC7', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}>
+              ▲ {item.upvotes}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--wb-sunset)', background: '#FDEDE8', border: '1px solid #F4C8B8', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}>
+              ▼ {item.downvotes}
+            </span>
             {item.durationMinutes && (
               <span style={{ fontSize: 10, color: 'var(--wb-ink-soft)', background: 'var(--wb-paper-2)', border: '1px solid var(--wb-line)', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}>
                 {formatDuration(item.durationMinutes)}

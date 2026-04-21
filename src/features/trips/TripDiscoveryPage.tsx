@@ -124,7 +124,10 @@ function PlaceInfoCard({
   }
 
   return (
-    <div style={{ maxWidth: 240, fontFamily: 'Inter, sans-serif' }}>
+    <div
+      className="wb-card"
+      style={{ maxWidth: 260, padding: 10, background: '#fff' }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color }}>{label}</span>
@@ -137,10 +140,14 @@ function PlaceInfoCard({
       <button
         onClick={handleOpenModal}
         disabled={added || adding || !user}
+        className={`wb-btn wb-btn-sm ${added ? 'wb-btn-ghost' : 'wb-btn-primary'}`}
         style={{
-          display: 'block', width: '100%', padding: '6px 0', borderRadius: 8, border: 'none',
-          background: added ? 'var(--wb-moss)' : 'var(--wb-ink)', color: 'var(--wb-paper)',
-          fontSize: 12, fontWeight: 600, cursor: added || adding ? 'default' : 'pointer',
+          width: '100%',
+          justifyContent: 'center',
+          border: added ? '1px solid var(--wb-moss)' : undefined,
+          background: added ? 'var(--wb-moss)' : undefined,
+          color: added ? '#fff' : undefined,
+          cursor: added || adding ? 'default' : 'pointer',
           opacity: adding ? 0.7 : 1,
         }}
       >
@@ -412,7 +419,7 @@ export function TripDiscoveryPage() {
             ref={autocompleteInputRef}
             type="text"
             placeholder="Fly to a location…"
-            className="w-full border-0 bg-transparent text-sm outline-none placeholder:text-gray-400"
+            className="w-full border-0 bg-transparent text-sm outline-none"
             style={{ color: 'var(--wb-ink)' }}
           />
         </div>
@@ -433,7 +440,7 @@ export function TripDiscoveryPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="cafes, viewpoints, museums…"
-            className="w-full border-0 bg-transparent text-sm outline-none placeholder:text-gray-400"
+            className="w-full border-0 bg-transparent text-sm outline-none"
             style={{ color: 'var(--wb-ink)' }}
           />
         </div>

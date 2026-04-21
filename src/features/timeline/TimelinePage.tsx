@@ -1,11 +1,8 @@
 // ─── TimelinePage.tsx ─────────────────────────────────────────────────────────
-// Orchestrates the full timeline/plan view:
+// Orchestrates the timeline calendar view:
 //  - Resizable bucket list sidebar (left)
-//  - Full-trip accordion view OR single-day grid (right)
-//  - Map sync: pushes calendar event markers to TripMapContext
-//    • Full trip, day expanded → markers for that day only
-//    • Full trip, no day expanded → markers for all calendar events
-//    • Single day → markers for selectedDay
+//  - Single-day drag/drop grid (right)
+//  - Map sync: markers for the selected calendar day
 //  - CreateEventModal, toast notifications
 //  - DayWeatherSummary strip
 
@@ -20,7 +17,6 @@ import {
 } from './timelineService';
 import type { TimelineEvent } from '@/types';
 import { TimelineGrid } from './components/TimelineGrid';
-import { TripAccordionView } from './components/TripAccordionView';
 import { BucketListSidebar } from './components/BucketListSidebar';
 import { CreateEventModal } from './components/CreateEventModal';
 import type { BucketItem } from './components/BucketListSidebar';
@@ -41,13 +37,6 @@ let toastCounter = 0;
 interface BucketItemLoc {
   id: string;
   location?: { lat: number; lng: number };
-  name?: string;
-  address?: string;
-  userData?: {
-    proposedDate?: string;
-    proposedTime?: string;
-    activityType?: string;
-  };
 }
 
 function normalizeLocation(raw: any): { lat: number; lng: number } | undefined {
@@ -113,10 +102,8 @@ export function TimelinePage() {
   // Bucket items with location data (for map markers)
   const [bucketItems, setBucketItems] = useState<BucketItemLoc[]>([]);
 
-  // View mode + accordion
-  const [viewMode, setViewMode]       = useState<'trip' | 'day'>('trip');
   const [selectedDay, setSelectedDay] = useState('');
-  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'1d' | '3d' | '7d'>('1d');
 
   // Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -132,13 +119,52 @@ export function TimelinePage() {
     () => Math.max(200, Math.floor(window.innerWidth * 0.25)),
   );
   const [isBucketSidebarCollapsed, setIsBucketSidebarCollapsed] = useState(false);
+  const [hasResizedBucketSidebar, setHasResizedBucketSidebar] = useState(false);
 
   const isOwner = activeTrip?.ownerId === user?.uid;
+  const tripDays = useMemo(
+    () => (activeTrip ? getDatesInRange(activeTrip.startDate, activeTrip.endDate) : []),
+    [activeTrip?.startDate, activeTrip?.endDate],
+  );
 
   // Seed selectedDay on first load
   useEffect(() => {
-    if (activeTrip && !selectedDay) setSelectedDay(activeTrip.startDate);
-  }, [activeTrip]);
+    if (!activeTrip) return;
+    if (!selectedDay) {
+      setSelectedDay(activeTrip.startDate);
+      return;
+    }
+
+    if (tripDays.length > 0 && !tripDays.includes(selectedDay)) {
+      setSelectedDay(tripDays[0]);
+    }
+  }, [activeTrip, selectedDay, tripDays]);
+
+  useEffect(() => {
+    if (!containerRef.current || hasResizedBucketSidebar) return;
+
+    const applyDefaultSplit = () => {
+      const width = containerRef.current?.getBoundingClientRect().width ?? 0;
+      if (width <= 0) return;
+      const target = Math.max(160, Math.floor(width / 3));
+      setBucketSidebarWidth(target);
+    };
+
+    applyDefaultSplit();
+    window.addEventListener('resize', applyDefaultSplit);
+    return () => window.removeEventListener('resize', applyDefaultSplit);
+  }, [hasResizedBucketSidebar]);
+
+  const viewWindowDays = viewMode === '1d' ? 1 : viewMode === '3d' ? 3 : 7;
+  const selectedDayIndex = selectedDay ? tripDays.indexOf(selectedDay) : -1;
+  const clampedAnchorIndex = selectedDayIndex < 0
+    ? 0
+    : Math.min(selectedDayIndex, Math.max(0, tripDays.length - viewWindowDays));
+
+  const visibleDays = useMemo(() => {
+    if (tripDays.length === 0) return [];
+    return tripDays.slice(clampedAnchorIndex, clampedAnchorIndex + viewWindowDays);
+  }, [tripDays, clampedAnchorIndex, viewWindowDays]);
 
   // Real-time timeline subscription
   useEffect(() => {
@@ -156,45 +182,24 @@ export function TimelinePage() {
     const q = query(collection(db, 'trips', activeTrip.id, 'bucketList'));
     return onSnapshot(q, (snap) => {
       setBucketItems(
-        snap.docs.map((d) => {
-          const data = d.data();
-          const userData = data.userData ?? {};
-          return {
-            id:       d.id,
-            location: normalizeLocation(data.location),
-            name:     data.name ?? undefined,
-            address:  data.address ?? undefined,
-            userData: {
-              proposedDate: typeof userData.proposedDate === 'string' ? userData.proposedDate : undefined,
-              proposedTime: typeof userData.proposedTime === 'string' ? userData.proposedTime : undefined,
-              activityType: typeof userData.activityType === 'string' ? userData.activityType : undefined,
-            },
-          };
-        }),
+        snap.docs.map((d) => ({
+          id: d.id,
+          location: normalizeLocation(d.data().location),
+        })),
       );
     });
   }, [activeTrip]);
 
-  const bucketMetaById = useMemo(
-    () => new Map(bucketItems.map((item) => [item.id, item])),
-    [bucketItems],
-  );
-
-  // Push calendar event markers to the map based on expanded/selected day
+  // Push selected-day calendar markers to the map
   useEffect(() => {
     const locationMap = new Map<string, { lat: number; lng: number }>();
     for (const item of bucketItems) {
       if (item.location) locationMap.set(item.id, item.location);
     }
 
-    // Determine which day to filter by (null = show all)
-    const mapFilterDay = viewMode === 'day'
-      ? selectedDay
-      : expandedDay;
-
-    const relevantEvents = mapFilterDay
-      ? events.filter((ev) => ev.date === mapFilterDay)
-      : events;
+    const relevantEvents = selectedDay
+      ? events.filter((ev) => visibleDays.includes(ev.date))
+      : [];
 
     const markers = relevantEvents
       .filter((ev) => ev.bucketItemId && locationMap.has(ev.bucketItemId))
@@ -206,7 +211,7 @@ export function TimelinePage() {
       }));
 
     setMapMarkers(markers);
-  }, [events, bucketItems, expandedDay, viewMode, selectedDay, setMapMarkers]);
+  }, [events, bucketItems, selectedDay, visibleDays, setMapMarkers]);
 
   function addToast(message: string, type: Toast['type']) {
     const id = ++toastCounter;
@@ -222,6 +227,7 @@ export function TimelinePage() {
 
   function startBucketSidebarResize(e: ReactMouseEvent<HTMLDivElement>) {
     e.preventDefault();
+    setHasResizedBucketSidebar(true);
     const minWidth = 160;
     const handleMouseMove = (mv: MouseEvent) => {
       const containerLeft  = containerRef.current?.getBoundingClientRect().left ?? 0;
@@ -235,10 +241,6 @@ export function TimelinePage() {
     };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-  }
-
-  function handleToggleDay(day: string) {
-    setExpandedDay((prev) => (prev === day ? null : day));
   }
 
   async function handleCreateCustom(data: {
@@ -271,7 +273,6 @@ export function TimelinePage() {
 
   if (!activeTrip) return null;
 
-  const tripDays         = getDatesInRange(activeTrip.startDate, activeTrip.endDate);
   const showWeatherStrip = geo.status === 'ready' && tripDays.length > 0;
   const scheduledBucketIds = useMemo(
     () => new Set(events
@@ -281,9 +282,9 @@ export function TimelinePage() {
   );
 
   // Day navigation helpers (single-day mode)
-  const currentDayIndex = tripDays.indexOf(selectedDay);
-  const canGoPrev = viewMode === 'day' && currentDayIndex > 0;
-  const canGoNext = viewMode === 'day' && currentDayIndex < tripDays.length - 1;
+  const currentDayIndex = selectedDayIndex;
+  const canGoPrev = currentDayIndex > 0;
+  const canGoNext = currentDayIndex >= 0 && currentDayIndex < tripDays.length - viewWindowDays;
 
   return (
     <div
@@ -330,10 +331,10 @@ export function TimelinePage() {
         {/* Header bar */}
         <div
           className="flex-shrink-0 px-4 py-2.5 flex items-center justify-between gap-3"
-          style={{ borderBottom: '1px solid var(--wb-line)', background: 'var(--wb-paper)' }}
+          style={{ borderBottom: '1px solid var(--wb-line)', background: 'var(--wb-paper)', flexWrap: 'wrap', rowGap: 8 }}
         >
           {/* Left: collapse toggle + title + day nav */}
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0" style={{ flexWrap: 'wrap', rowGap: 6, flex: '1 1 360px' }}>
             <button
               onClick={() => setIsBucketSidebarCollapsed((p) => !p)}
               style={{
@@ -357,63 +358,67 @@ export function TimelinePage() {
               </h2>
             </div>
 
-            {/* Day navigation (single-day mode) */}
-            {viewMode === 'day' && (
-              <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                disabled={!canGoPrev}
+                onClick={() => setSelectedDay(tripDays[currentDayIndex - 1])}
+                style={{
+                  width: 24, height: 24, borderRadius: 6,
+                  border: '1px solid var(--wb-line)', background: 'white',
+                  fontSize: 14, cursor: canGoPrev ? 'pointer' : 'not-allowed',
+                  opacity: canGoPrev ? 1 : 0.3, color: 'var(--wb-ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >‹</button>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--wb-ink)', minWidth: 72, textAlign: 'center' }}>
+                {visibleDays.length === 0
+                  ? 'No dates'
+                  : visibleDays.length === 1
+                    ? formatDayFull(visibleDays[0])
+                    : `${formatDayLabel(visibleDays[0])} - ${formatDayLabel(visibleDays[visibleDays.length - 1])}`}
+              </span>
+              <button
+                disabled={!canGoNext}
+                onClick={() => setSelectedDay(tripDays[currentDayIndex + 1])}
+                style={{
+                  width: 24, height: 24, borderRadius: 6,
+                  border: '1px solid var(--wb-line)', background: 'white',
+                  fontSize: 14, cursor: canGoNext ? 'pointer' : 'not-allowed',
+                  opacity: canGoNext ? 1 : 0.3, color: 'var(--wb-ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >›</button>
+
+              <div style={{ width: 1, height: 18, background: 'var(--wb-line)', margin: '0 4px' }} />
+
+              <div className="wb-seg" role="tablist" aria-label="Timeline range">
                 <button
-                  disabled={!canGoPrev}
-                  onClick={() => setSelectedDay(tripDays[currentDayIndex - 1])}
-                  style={{
-                    width: 24, height: 24, borderRadius: 6,
-                    border: '1px solid var(--wb-line)', background: 'white',
-                    fontSize: 14, cursor: canGoPrev ? 'pointer' : 'not-allowed',
-                    opacity: canGoPrev ? 1 : 0.3, color: 'var(--wb-ink)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >‹</button>
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--wb-ink)', minWidth: 72, textAlign: 'center' }}>
-                  {formatDayFull(selectedDay)}
-                </span>
+                  type="button"
+                  className={`wb-seg-btn ${viewMode === '1d' ? 'active' : ''}`}
+                  onClick={() => setViewMode('1d')}
+                >
+                  1D
+                </button>
                 <button
-                  disabled={!canGoNext}
-                  onClick={() => setSelectedDay(tripDays[currentDayIndex + 1])}
-                  style={{
-                    width: 24, height: 24, borderRadius: 6,
-                    border: '1px solid var(--wb-line)', background: 'white',
-                    fontSize: 14, cursor: canGoNext ? 'pointer' : 'not-allowed',
-                    opacity: canGoNext ? 1 : 0.3, color: 'var(--wb-ink)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >›</button>
+                  type="button"
+                  className={`wb-seg-btn ${viewMode === '3d' ? 'active' : ''}`}
+                  onClick={() => setViewMode('3d')}
+                >
+                  3D
+                </button>
+                <button
+                  type="button"
+                  className={`wb-seg-btn ${viewMode === '7d' ? 'active' : ''}`}
+                  onClick={() => setViewMode('7d')}
+                >
+                  1W
+                </button>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* Right: view toggle + role + create */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Segmented control */}
-            <div style={{ display: 'flex', border: '1px solid var(--wb-line)', borderRadius: 7, overflow: 'hidden', background: 'white' }}>
-              {(['trip', 'day'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => {
-                    setViewMode(mode);
-                    if (mode === 'day' && !selectedDay) setSelectedDay(tripDays[0] ?? '');
-                  }}
-                  style={{
-                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
-                    cursor: 'pointer', border: 'none',
-                    borderRight: mode === 'trip' ? '1px solid var(--wb-line)' : 'none',
-                    background: viewMode === mode ? 'var(--wb-ink)' : 'transparent',
-                    color: viewMode === mode ? 'var(--wb-paper)' : 'var(--wb-ink-soft)',
-                    transition: 'background var(--wb-fast), color var(--wb-fast)',
-                  }}
-                >
-                  {mode === 'trip' ? 'Full trip' : 'Day'}
-                </button>
-              ))}
-            </div>
-
+          {/* Right: role + create */}
+          <div className="flex items-center gap-2 flex-shrink-0" style={{ marginLeft: 'auto' }}>
             {/* Role badge */}
             {isOwner ? (
               <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: 'rgba(14,107,168,0.1)', color: 'var(--wb-ocean)' }}>
@@ -428,10 +433,7 @@ export function TimelinePage() {
             {/* Create event */}
             {isOwner && (
               <button
-                onClick={() => openCreateModal(
-                  viewMode === 'day' ? selectedDay : (expandedDay ?? activeTrip.startDate),
-                  '09:00',
-                )}
+                onClick={() => openCreateModal(visibleDays[0] || selectedDay || activeTrip.startDate, '09:00')}
                 style={{
                   padding: '4px 10px', borderRadius: 7,
                   background: 'var(--wb-ink)', color: 'var(--wb-paper)',
@@ -454,7 +456,7 @@ export function TimelinePage() {
               <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--wb-ink-soft)', opacity: 0.6, flexShrink: 0 }}>
                 Weather
               </span>
-              {(viewMode === 'day' ? [selectedDay] : tripDays).map((date) => (
+              {visibleDays.map((date) => (
                 <div key={date} className="flex flex-col items-center gap-1 flex-shrink-0">
                   <span style={{ fontSize: 9, color: 'var(--wb-ink-soft)', fontWeight: 600 }}>
                     {formatDayLabel(date)}
@@ -478,35 +480,23 @@ export function TimelinePage() {
           </div>
         )}
 
-        {/* ── Content area: accordion (Full trip) or drag-drop grid (Day) ── */}
+        {/* ── Content area: drag-drop grid ── */}
         <div className="flex-1 overflow-hidden">
-          {viewMode === 'trip' ? (
-            // Full trip: collapsible day-by-day accordion
-            <TripAccordionView
-              days={tripDays}
+          <div className="h-full overflow-auto">
+            <TimelineGrid
+              trip={activeTrip}
               events={events}
-              expandedDay={expandedDay}
-              onToggleDay={handleToggleDay}
-              bucketMetaById={bucketMetaById}
+              isOwner={isOwner}
+              currentUserId={user?.uid ?? ''}
+              draggingBucketItem={draggingBucket}
+              draggingExistingEvent={draggingEvent}
+              onExistingEventDragStart={setDraggingEvent}
+              onDragEnd={() => { setDraggingBucket(null); setDraggingEvent(null); }}
+              onToast={addToast}
+              onOpenCreateModal={openCreateModal}
+              visibleDays={visibleDays}
             />
-          ) : (
-            // Single day: drag-drop scheduling grid
-            <div className="h-full overflow-auto">
-              <TimelineGrid
-                trip={activeTrip}
-                events={events}
-                isOwner={isOwner}
-                currentUserId={user?.uid ?? ''}
-                draggingBucketItem={draggingBucket}
-                draggingExistingEvent={draggingEvent}
-                onExistingEventDragStart={setDraggingEvent}
-                onDragEnd={() => { setDraggingBucket(null); setDraggingEvent(null); }}
-                onToast={addToast}
-                onOpenCreateModal={openCreateModal}
-                filterDay={selectedDay}
-              />
-            </div>
-          )}
+          </div>
         </div>
       </main>
 

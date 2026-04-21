@@ -142,7 +142,8 @@ export function CreateEventModal({
                 type="time"
                 required
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
+                onChange={(e) => setStartTime(normalizeTimeInput(e.target.value))}
+                step={60}
                 className={inputCls}
               />
             </Field>
@@ -223,6 +224,13 @@ export function CreateEventModal({
 
 const inputCls =
   'w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+
+function normalizeTimeInput(value: string): string {
+  if (!value) return '';
+  const parts = value.split(':');
+  if (parts.length < 2) return value;
+  return `${parts[0]}:${parts[1]}`;
+}
 
 function Field({ label, id, children }: { label: string; id: string; children: React.ReactNode }) {
   return (

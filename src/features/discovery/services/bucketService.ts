@@ -32,7 +32,7 @@ import {
   setCachedWeatherSnapshot,
 } from './weatherService';
 
-export type BucketListSortMode = 'score' | 'recent' | 'order';
+export type BucketListSortMode = 'score' | 'recent';
 
 export interface BucketListAddedBy {
   userId: string;
@@ -191,7 +191,14 @@ export async function addToBucket(
       payload.userData = trimmedUserData;
     }
 
-    await addDoc(bucketListCol(normalizedTripId), payload);
+    const ref = await addDoc(bucketListCol(normalizedTripId), payload);
+
+    // Auto-upvote by the creator must happen as an update because create rules
+    // require fresh items to start with zeroed vote fields.
+    const autoVote = await castBucketVote(normalizedTripId, ref.id, addedBy.userId, 'up');
+    if (!autoVote.ok) {
+      console.warn('[addToBucket] Auto-upvote failed', autoVote.error);
+    }
 
     return ok(undefined);
   } catch (e: any) {
@@ -210,9 +217,7 @@ export function listenToBucketList(
   const baseQuery = bucketListCol(normalizedTripId);
   const bucketQuery = sortMode === 'recent'
     ? query(baseQuery, orderBy('createdAt', 'desc'))
-    : sortMode === 'order'
-      ? query(baseQuery, orderBy('order', 'asc'), orderBy('createdAt', 'desc'))
-      : query(baseQuery, orderBy('score', 'desc'), orderBy('createdAt', 'desc'));
+    : query(baseQuery, orderBy('score', 'desc'), orderBy('createdAt', 'desc'));
 
   return onSnapshot(
     bucketQuery,
@@ -227,25 +232,6 @@ export function listenToBucketList(
       onError?.('Unable to load the bucket list right now.');
     },
   );
-}
-
-export async function updateBucketItemOrder(
-  tripId: string,
-  itemId: string,
-  order: number,
-): Promise<Result<void>> {
-  const normalizedTripId = tripId.trim();
-  if (!normalizedTripId) {
-    return err('Trip ID is required.');
-  }
-
-  try {
-    await updateDoc(bucketItemDoc(normalizedTripId, itemId), { order });
-    return ok(undefined);
-  } catch (e: any) {
-    console.error('[updateBucketItemOrder]', e);
-    return err('Failed to reorder this item.');
-  }
 }
 
 export async function updateBucketItemWeather(

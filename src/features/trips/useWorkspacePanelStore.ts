@@ -14,12 +14,14 @@ export interface WorkspacePanel {
 }
 
 const DEFAULT_PANEL_WIDTH_RATIO = 0.25;
+const TIMELINE_PANEL_WIDTH_RATIO = 0.3;
 const MIN_PANEL_WIDTH_PX = 280;
 const MIN_MAP_WIDTH_RATIO = 0.2;
 
 interface WorkspacePanelState {
   openPanels: WorkspacePanel[];
   activePanelKey: WorkspacePanelKey;
+  resetForRoute: (key: WorkspacePanelKey) => void;
   setFromRoute: (key: WorkspacePanelKey) => void;
   togglePanel: (key: WorkspacePanelKey) => void;
   focusPanel: (key: WorkspacePanelKey) => void;
@@ -28,9 +30,10 @@ interface WorkspacePanelState {
   resizePanel: (key: WorkspacePanelKey, nextWidth: number) => void;
 }
 
-function getDefaultPanelWidth(): number {
+function getDefaultPanelWidthForKey(key: WorkspacePanelKey): number {
   if (typeof window === 'undefined') return 360;
-  return Math.max(MIN_PANEL_WIDTH_PX, Math.floor(window.innerWidth * DEFAULT_PANEL_WIDTH_RATIO));
+  const ratio = key === 'timeline' ? TIMELINE_PANEL_WIDTH_RATIO : DEFAULT_PANEL_WIDTH_RATIO;
+  return Math.max(MIN_PANEL_WIDTH_PX, Math.floor(window.innerWidth * ratio));
 }
 
 function clampPanelWidth(
@@ -44,8 +47,23 @@ function clampPanelWidth(
 }
 
 export const useWorkspacePanelStore = create<WorkspacePanelState>((set) => ({
-  openPanels: [{ key: 'planning', width: getDefaultPanelWidth() }],
+  openPanels: [{ key: 'planning', width: getDefaultPanelWidthForKey('planning') }],
   activePanelKey: 'planning',
+
+  resetForRoute: (key) => set((state) => {
+    const existing = state.openPanels.find((panel) => panel.key === key);
+    if (existing) {
+      return { activePanelKey: key };
+    }
+
+    const nextPanels = [{ key, width: getDefaultPanelWidthForKey(key) }, ...state.openPanels];
+    const trimmed = nextPanels.slice(0, 3);
+
+    return {
+      openPanels: trimmed,
+      activePanelKey: key,
+    };
+  }),
 
   setFromRoute: (key) => set((state) => {
     const existing = state.openPanels.find((panel) => panel.key === key);
@@ -53,7 +71,7 @@ export const useWorkspacePanelStore = create<WorkspacePanelState>((set) => ({
       return { activePanelKey: key };
     }
 
-    const nextPanels = [{ key, width: getDefaultPanelWidth() }, ...state.openPanels];
+    const nextPanels = [{ key, width: getDefaultPanelWidthForKey(key) }, ...state.openPanels];
     const trimmed = nextPanels.slice(0, 3);
 
     return {
@@ -75,7 +93,7 @@ export const useWorkspacePanelStore = create<WorkspacePanelState>((set) => ({
       };
     }
 
-    const nextPanels = [{ key, width: getDefaultPanelWidth() }, ...state.openPanels];
+    const nextPanels = [{ key, width: getDefaultPanelWidthForKey(key) }, ...state.openPanels];
     const trimmed = nextPanels.slice(0, 3);
     return {
       openPanels: trimmed,
@@ -99,7 +117,10 @@ export const useWorkspacePanelStore = create<WorkspacePanelState>((set) => ({
     };
   }),
 
-  closeAll: () => set({ openPanels: [] }),
+  closeAll: () => set({
+    openPanels: [],
+    activePanelKey: 'planning',
+  }),
 
   resizePanel: (key, nextWidth) => set((state) => {
     const target = state.openPanels.find((panel) => panel.key === key);

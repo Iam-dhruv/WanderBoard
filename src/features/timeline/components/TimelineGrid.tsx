@@ -185,7 +185,7 @@ interface TimelineGridProps {
   onDragEnd: () => void;
   onToast: (msg: string, type: 'success' | 'error' | 'warn') => void;
   onOpenCreateModal: (date: string, startTime: string) => void;
-  filterDay?: string;
+  visibleDays?: string[];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -201,12 +201,16 @@ export function TimelineGrid({
   onDragEnd,
   onToast,
   onOpenCreateModal,
-  filterDay,
+  visibleDays,
 }: TimelineGridProps) {
   const days = useMemo(() => {
     const all = dateRange(trip.startDate, trip.endDate);
-    return filterDay ? all.filter((d) => d === filterDay) : all;
-  }, [trip.startDate, trip.endDate, filterDay]);
+    if (visibleDays && visibleDays.length > 0) {
+      const allowed = new Set(visibleDays);
+      return all.filter((d) => allowed.has(d));
+    }
+    return all;
+  }, [trip.startDate, trip.endDate, visibleDays]);
 
   const dayTrees = useMemo(() => buildDayTrees(events), [events]);
 

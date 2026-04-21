@@ -1,35 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ROUTES } from '@/config/routes';
 import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DraggableAttributes,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  arrayMove,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import {
-  addBucketComment,
   castBucketVote,
   deleteBucketItem,
-  listenToBucketComments,
   listenToBucketList,
-  updateBucketItemOrder,
   type BucketListSortMode,
 } from '@/features/discovery/services/bucketService';
-import type { AppUser, BucketListComment, BucketListItem, VoteValue } from '@/types';
+import type { AppUser, BucketListItem, VoteValue } from '@/types';
 import { useTripStore } from './useTripStore';
 import { useTripMap } from './TripMapContext';
+import { useWorkspacePanelStore } from './useWorkspacePanelStore';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 // ── NEW: MiniWeatherCard from the canonical weather feature ──────────────────
@@ -75,7 +57,11 @@ export function TripBucketListPage() {
   const [scheduledBucketIds, setScheduledBucketIds] = useState<Set<string>>(new Set());
   const [photoUrlOverrides, setPhotoUrlOverrides] = useState<Record<string, string>>({});
   const photoLookupPendingRef = useRef<Set<string>>(new Set());
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const openPanels = useWorkspacePanelStore((s) => s.openPanels);
+  const hasDiscoveryPanel = useMemo(
+    () => openPanels.some((panel) => panel.key === 'discovery'),
+    [openPanels],
+  );
 
   // Track which bucket items have been scheduled in the timeline
   useEffect(() => {
@@ -116,6 +102,10 @@ export function TripBucketListPage() {
   }, [activeTrip, sortMode]);
 
   useEffect(() => {
+    // Priority order for map content: discovery > bucket-list > planning.
+    // If discovery is open, bucket-list does not override markers.
+    if (hasDiscoveryPanel) return;
+
     if (!activeTrip) {
       setMapMarkers([]);
       setRenderInfoWindow(null);
@@ -161,7 +151,7 @@ export function TripBucketListPage() {
       setSelectedMarkerId(null);
       setHoveredMarkerId(null);
     };
-  }, [items, activeTrip, scheduledBucketIds, setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId]);
+  }, [items, activeTrip, scheduledBucketIds, setMapMarkers, setRenderInfoWindow, setSelectedMarkerId, setHoveredMarkerId, hasDiscoveryPanel]);
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !window.google?.maps?.places) return;
@@ -206,47 +196,24 @@ export function TripBucketListPage() {
   }
 
   const isOwner = activeTrip.ownerId === user?.uid;
-  const isManualSort = sortMode === 'order';
-
-  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id || !activeTrip) {
-      return;
-    }
-
-    const oldIndex = items.findIndex((item) => item.id === active.id);
-    const newIndex = items.findIndex((item) => item.id === over.id);
-
-    if (oldIndex < 0 || newIndex < 0) {
-      return;
-    }
-
-    const nextItems = arrayMove<BucketListItem>(items, oldIndex, newIndex);
-    const movedItem = nextItems[newIndex];
-    const prevOrder = nextItems[newIndex - 1]?.order;
-    const nextOrder = nextItems[newIndex + 1]?.order;
-    const newOrder = calculateOrder(prevOrder, nextOrder);
-
-    setItems(nextItems.map((item: BucketListItem) => (
-      item.id === movedItem.id ? { ...item, order: newOrder } : item
-    )));
-
-    await updateBucketItemOrder(activeTrip.id, movedItem.id, newOrder);
-  };
 
   return (
     <div className="h-full overflow-y-auto p-4 space-y-6">
-      <section className="rounded-2xl bg-white border border-gray-100 p-6 shadow-sm">
+      <section
+        className="rounded-[16px] border p-5"
+        style={{ background: '#fff', borderColor: 'var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)' }}
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Bucket list</p>
-            <h2 className="text-2xl font-semibold text-gray-900">Vote and rank the must-do spots</h2>
-            <p className="text-sm text-gray-500">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--wb-ocean)' }}>Bucket list</p>
+            <h2 className="font-fraunces text-[22px] font-bold leading-tight tracking-tight" style={{ color: 'var(--wb-ink)' }}>Vote and rank the must-do spots</h2>
+            <p className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>
               Added time comes from the server clock, so ordering stays consistent for every traveler.
             </p>
           </div>
           <Link
             to={ROUTES.tripDiscovery(activeTrip.id)}
-            className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
+            className="wb-btn wb-btn-primary wb-btn-sm"
           >
             Add from discovery
           </Link>
@@ -263,68 +230,42 @@ export function TripBucketListPage() {
             isActive={sortMode === 'recent'}
             onClick={() => setSortMode('recent')}
           />
-          <SortChip
-            label="Manual order"
-            isActive={sortMode === 'order'}
-            onClick={() => setSortMode('order')}
-          />
         </div>
-        {isManualSort && (
-          <p className="mt-2 text-xs text-gray-500">Drag cards using the handle to reorder the list.</p>
-        )}
       </section>
 
       {loading && (
-        <div className="rounded-2xl border border-gray-100 bg-white p-8 text-sm text-gray-500 shadow-sm">
+        <div
+          className="rounded-[16px] border p-8 text-sm"
+          style={{ borderColor: 'var(--wb-line)', background: '#fff', color: 'var(--wb-ink-soft)', boxShadow: 'var(--wb-shadow-sm)' }}
+        >
           Loading bucket list...
         </div>
       )}
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="rounded-[16px] border p-4 text-sm" style={{ borderColor: 'var(--wb-sunset)', background: '#FEF2EE', color: 'var(--wb-sunset)' }}>
           {error}
         </div>
       )}
       {!loading && items.length === 0 && !error && (
-        <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+        <div className="rounded-[16px] border border-dashed p-10 text-center text-sm" style={{ borderColor: 'var(--wb-line)', background: '#fff', color: 'var(--wb-ink-soft)' }}>
           No items yet. Add places from the Discovery tab to get started.
         </div>
       )}
 
-      {isManualSort ? (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-4">
-              {items.map((item) => (
-                <SortableBucketCard
-                  key={item.id}
-                  item={item}
-                  tripId={activeTrip.id}
-                  tripStartDate={activeTrip.startDate}
-                  tripEndDate={activeTrip.endDate}
-                  isOwner={isOwner}
-                  currentUser={user}
-                  photoUrlOverride={photoUrlOverrides[item.id]}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      ) : (
-        <div className="space-y-4">
-          {items.map((item) => (
-            <BucketListCard
-              key={item.id}
-              item={item}
-              tripId={activeTrip.id}
-              tripStartDate={activeTrip.startDate}
-              tripEndDate={activeTrip.endDate}
-              isOwner={isOwner}
-              currentUser={user}
-              photoUrlOverride={photoUrlOverrides[item.id]}
-            />
-          ))}
-        </div>
-      )}
+      <div className="space-y-4">
+        {items.map((item) => (
+          <BucketListCard
+            key={item.id}
+            item={item}
+            tripId={activeTrip.id}
+            tripStartDate={activeTrip.startDate}
+            tripEndDate={activeTrip.endDate}
+            isOwner={isOwner}
+            currentUser={user}
+            photoUrlOverride={photoUrlOverrides[item.id]}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -334,57 +275,15 @@ function SortChip({ label, isActive, onClick }: { label: string; isActive: boole
     <button
       type="button"
       onClick={onClick}
-      className={[
-        'rounded-full px-3 py-1 text-xs font-medium transition-colors',
-        isActive ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
-      ].join(' ')}
+      className="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+      style={
+        isActive
+          ? { background: 'var(--wb-primary-soft)', color: 'var(--wb-primary)' }
+          : { background: 'var(--wb-paper-2)', color: 'var(--wb-ink-soft)' }
+      }
     >
       {label}
     </button>
-  );
-}
-
-function calculateOrder(previous?: number, next?: number) {
-  if (typeof previous === 'number' && typeof next === 'number') {
-    return (previous + next) / 2;
-  }
-  if (typeof previous === 'number') {
-    return previous + 1;
-  }
-  if (typeof next === 'number') {
-    return next - 1;
-  }
-  return Date.now();
-}
-
-function SortableBucketCard(props: {
-  item: BucketListItem;
-  tripId: string;
-  tripStartDate: string;
-  tripEndDate: string;
-  isOwner: boolean;
-  currentUser: AppUser | null;
-  photoUrlOverride?: string;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.item.id,
-  });
-
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.8 : 1,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      <BucketListCard
-        {...props}
-        showDragHandle
-        dragHandleProps={listeners}
-        dragHandleAttributes={attributes}
-      />
-    </div>
   );
 }
 
@@ -395,9 +294,6 @@ function BucketListCard({
   tripEndDate,
   isOwner,
   currentUser,
-  showDragHandle = false,
-  dragHandleProps,
-  dragHandleAttributes,
   photoUrlOverride,
 }: {
   item: BucketListItem;
@@ -406,9 +302,6 @@ function BucketListCard({
   tripEndDate: string;
   isOwner: boolean;
   currentUser: AppUser | null;
-  showDragHandle?: boolean;
-  dragHandleProps?: Record<string, unknown>;
-  dragHandleAttributes?: DraggableAttributes;
   photoUrlOverride?: string;
 }) {
   const [hasImageError, setHasImageError] = useState(false);
@@ -416,7 +309,6 @@ function BucketListCard({
   const [voteLoading, setVoteLoading] = useState<'up' | 'down' | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [showComments, setShowComments] = useState(false);
 
   const currentUserId = currentUser?.uid ?? null;
   const currentVote: VoteValue = currentUserId ? (item.votesByUser[currentUserId] ?? 0) : 0;
@@ -470,35 +362,28 @@ function BucketListCard({
   };
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <article
+      className="overflow-hidden rounded-[16px] border bg-white"
+      style={{ borderColor: 'var(--wb-line)', boxShadow: 'var(--wb-shadow-sm)' }}
+    >
       <div className="grid gap-4 p-4 md:grid-cols-[200px,1fr]">
         <img
           src={hasImageError ? FALLBACK_CARD_IMAGE : resolvedPhotoUrl}
           alt={item.name}
           onError={() => setHasImageError(true)}
-          className="h-40 w-full rounded-xl object-cover bg-gray-100"
+          className="h-40 w-full rounded-xl object-cover"
+          style={{ background: 'var(--wb-paper-2)' }}
         />
 
         <div className="space-y-4">
           <div className="space-y-1">
             <div className="flex items-start gap-2">
-              {showDragHandle && (
-                <button
-                  type="button"
-                  className="mt-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-semibold text-gray-500 hover:bg-gray-50"
-                  aria-label="Drag to reorder"
-                  {...dragHandleAttributes}
-                  {...dragHandleProps}
-                >
-                  |||
-                </button>
-              )}
               <div className="space-y-1">
-                <h3 className="text-lg font-semibold text-gray-900">{item.name}</h3>
-                <p className="text-sm text-gray-500">{item.address}</p>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--wb-ink)' }}>{item.name}</h3>
+                <p className="text-sm" style={{ color: 'var(--wb-ink-soft)' }}>{item.address}</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-3 text-xs" style={{ color: 'var(--wb-ink-soft)' }}>
               <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700">
                 Rating {item.rating.toFixed(1)}
               </span>
@@ -613,151 +498,21 @@ function BucketListCard({
                 {deleteLoading ? 'Removing...' : 'Remove'}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setShowComments((prev) => !prev)}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-            >
-              {showComments ? 'Hide comments' : 'Show comments'}
-            </button>
           </div>
 
           {voteError && <p className="text-xs text-rose-600">{voteError}</p>}
           {deleteError && <p className="text-xs text-rose-600">{deleteError}</p>}
-
-          {showComments && (
-            <BucketItemComments tripId={tripId} itemId={item.id} currentUser={currentUser} />
-          )}
         </div>
       </div>
     </article>
   );
 }
 
-function BucketItemComments({
-  tripId,
-  itemId,
-  currentUser,
-}: {
-  tripId: string;
-  itemId: string;
-  currentUser: AppUser | null;
-}) {
-  const [comments, setComments] = useState<BucketListComment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const unsubscribe = listenToBucketComments(
-      tripId,
-      itemId,
-      (nextComments) => {
-        setComments(nextComments);
-        setLoading(false);
-      },
-      (errMessage) => {
-        setError(errMessage);
-        setLoading(false);
-      },
-    );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [tripId, itemId]);
-
-  const displayName = useMemo(
-    () => currentUser?.displayName ?? currentUser?.email ?? 'Traveler',
-    [currentUser],
-  );
-
-  const handleSubmit = async () => {
-    if (!currentUser || submitting) {
-      if (!currentUser) {
-        setError('Sign in to comment.');
-      }
-      return;
-    }
-
-    setSubmitting(true);
-    setError(null);
-
-    const result = await addBucketComment(tripId, itemId, {
-      userId: currentUser.uid,
-      userName: displayName,
-      userPhotoUrl: currentUser.photoURL ?? null,
-      message,
-    });
-
-    if (result.ok) {
-      setMessage('');
-    } else {
-      setError(result.error);
-    }
-
-    setSubmitting(false);
-  };
-
-  return (
-    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-gray-800">Comments</h4>
-        <span className="text-xs text-gray-500">{comments.length}</span>
-      </div>
-
-      {loading && <p className="text-xs text-gray-500">Loading comments...</p>}
-      {!loading && comments.length === 0 && (
-        <p className="text-xs text-gray-500">No comments yet. Start the discussion.</p>
-      )}
-
-      <div className="space-y-3">
-        {comments.map((comment) => (
-          <div key={comment.id} className="flex gap-3">
-            <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-semibold">
-              {getInitials(comment.userName)}
-            </div>
-            <div className="flex-1">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                <span className="font-semibold text-gray-800">{comment.userName}</span>
-                <span>{formatDate(comment.createdAt)}</span>
-              </div>
-              <p className="text-sm text-gray-700 mt-1">{comment.message}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="space-y-2">
-        <textarea
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          rows={2}
-          placeholder="Add a comment..."
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-        />
-        <div className="flex items-center justify-between">
-          {error ? <span className="text-xs text-rose-600">{error}</span> : <span />}
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting || !message.trim()}
-            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-          >
-            {submitting ? 'Posting...' : 'Post'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function LegacyWeatherFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-2 py-1">
-      <p className="text-[10px] uppercase tracking-[0.08em] text-gray-500">{label}</p>
-      <p className="mt-0.5 text-xs font-semibold text-gray-700">{value}</p>
+    <div className="rounded-lg border bg-white px-2 py-1" style={{ borderColor: 'var(--wb-line)' }}>
+      <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: 'var(--wb-ink-soft)' }}>{label}</p>
+      <p className="mt-0.5 text-xs font-semibold" style={{ color: 'var(--wb-ink)' }}>{value}</p>
     </div>
   );
 }
@@ -855,6 +610,3 @@ function formatDateTime(value: string) {
   }).format(new Date(parsed));
 }
 
-function getInitials(name: string) {
-  return name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-}

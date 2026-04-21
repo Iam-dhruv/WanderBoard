@@ -14,7 +14,7 @@ import { resolvePlaceCoordinates } from '@/features/discovery/services/placesApi
 import { Avatar } from '@/components/Avatar';
 import { Sticker } from '@/components/Sticker';
 
-const CREATE_TRIP_MAP_LIBRARIES: ('places')[] = ['places'];
+const CREATE_TRIP_MAP_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
 
 // Curated travel photos for trip cards (cycled by index)
 const COVER_PHOTOS = [
@@ -47,6 +47,14 @@ function parseCityTokens(rawValue: string): string[] {
   return rawValue.split(';').map(normalizeCity).filter(Boolean);
 }
 
+function resolveDisplayName(user: { displayName?: string | null; email?: string | null }): string {
+  const preferred = user.displayName?.trim();
+  if (preferred) return preferred;
+  const email = user.email?.trim();
+  if (email) return email.split('@')[0] ?? email;
+  return 'Traveler';
+}
+
 // ─── Dashboard ─────────────────────────────────────────────────────────────────
 
 export function DashboardPage() {
@@ -56,6 +64,7 @@ export function DashboardPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin,   setShowJoin]   = useState(false);
+  const [tripView, setTripView] = useState<'owned' | 'joined'>('owned');
 
   useEffect(() => {
     if (!user) return;
@@ -80,10 +89,14 @@ export function DashboardPage() {
     navigate(ROUTES.LOGIN, { replace: true });
   }
 
-  const upcomingTrips = trips
+  const ownedTrips = trips.filter((t) => t.ownerId === user?.uid);
+  const joinedTrips = trips.filter((t) => t.ownerId !== user?.uid && t.memberIds.includes(user?.uid ?? ''));
+  const visibleTrips = tripView === 'owned' ? ownedTrips : joinedTrips;
+
+  const upcomingTrips = visibleTrips
     .filter((t) => getDaysToGo(t.startDate) > 0)
     .sort((a, b) => getDaysToGo(a.startDate) - getDaysToGo(b.startDate));
-  const heroTrip = upcomingTrips[0] ?? trips[0] ?? null;
+  const heroTrip = upcomingTrips[0] ?? visibleTrips[0] ?? null;
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--wb-paper)' }}>
@@ -107,15 +120,28 @@ export function DashboardPage() {
 
         {/* Nav links */}
         <nav className="flex gap-1 ml-5">
-          <a href="#" className="px-3 py-[7px] rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--wb-ink)' }}>
+          <button
+            type="button"
+            onClick={() => setTripView('owned')}
+            className="px-3 py-[7px] rounded-lg text-sm font-semibold"
+            style={{
+              background: tripView === 'owned' ? 'var(--wb-ink)' : 'transparent',
+              color: tripView === 'owned' ? 'white' : 'var(--wb-ink)',
+            }}
+          >
             My Trips
-          </a>
-          <a href="#" className="px-3 py-[7px] rounded-lg text-sm font-medium hover:bg-wb-paper-2 transition-colors" style={{ color: 'var(--wb-ink-soft)' }}>
-            Discover
-          </a>
-          <a href="#" className="px-3 py-[7px] rounded-lg text-sm font-medium hover:bg-wb-paper-2 transition-colors" style={{ color: 'var(--wb-ink-soft)' }}>
-            Bucket List
-          </a>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTripView('joined')}
+            className="px-3 py-[7px] rounded-lg text-sm font-semibold"
+            style={{
+              background: tripView === 'joined' ? 'var(--wb-ink)' : 'transparent',
+              color: tripView === 'joined' ? 'white' : 'var(--wb-ink)',
+            }}
+          >
+            Joined Trips
+          </button>
         </nav>
 
         {/* Right actions */}
@@ -146,7 +172,7 @@ export function DashboardPage() {
       </header>
 
       {/* ── Hero row ── */}
-      {!tripsLoading && trips.length > 0 && heroTrip && (
+      {!tripsLoading && visibleTrips.length > 0 && heroTrip && (
         <div className="grid gap-6 px-8 pt-8" style={{ gridTemplateColumns: '1.3fr 1fr' }}>
           <HeroCard trip={heroTrip} isOwner={heroTrip.ownerId === user?.uid} onOpen={() => navigate(ROUTES.tripPlanning(heroTrip.id))} />
           <QuickActionsPanel
@@ -158,16 +184,16 @@ export function DashboardPage() {
       )}
 
       {/* ── All trips grid ── */}
-      {!tripsLoading && trips.length > 0 && (
+      {!tripsLoading && visibleTrips.length > 0 && (
         <section className="px-8 pb-14">
           <div className="flex items-end justify-between mt-8 mb-5">
             <h2 className="font-fraunces font-bold text-[40px] leading-none tracking-tight" style={{ color: 'var(--wb-ink)' }}>
-              All{' '}
+              {tripView === 'owned' ? 'My' : 'Joined'}{' '}
               <em className="italic" style={{ color: 'var(--wb-sunset)', fontVariationSettings: '"SOFT" 100' }}>trips</em>
             </h2>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            {trips.map((trip, idx) => (
+            {visibleTrips.map((trip, idx) => (
               <TripCard
                 key={trip.id}
                 trip={trip}
@@ -182,7 +208,7 @@ export function DashboardPage() {
       )}
 
       {/* ── Empty state ── */}
-      {!tripsLoading && trips.length === 0 && (
+      {!tripsLoading && visibleTrips.length === 0 && (
         <EmptyState
           userName={user?.displayName?.split(' ')[0] ?? 'Traveler'}
           onNewTrip={() => setShowCreate(true)}
@@ -296,10 +322,6 @@ function QuickActionsPanel({ inviteCode, onNewTrip, onJoin }: {
       icon: <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /> },
     { ico: 'coral', label: 'Join with code', desc: '6-char invite', onClick: onJoin,
       icon: <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /> },
-    { ico: 'ocean', label: 'Browse places', desc: 'Get inspired', onClick: () => {},
-      icon: <><circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2.5" fill="none"/><path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></> },
-    { ico: 'ink', label: 'My bucket list', desc: 'Saved spots', onClick: () => {},
-      icon: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" strokeWidth="2" fill="none"/><polyline points="14 2 14 8 20 8" stroke="currentColor" strokeWidth="2"/></> },
   ];
 
   const icoBg: Record<string, string> = {
@@ -761,7 +783,7 @@ function JoinTripModal({ user, onClose, onJoined }: {
     const result = await joinTrip({
       rawCode: code,
       userId: user.uid,
-      displayName: user.displayName ?? 'Traveler',
+      displayName: resolveDisplayName(user),
       email: user.email ?? '',
       photoURL: user.photoURL,
     });

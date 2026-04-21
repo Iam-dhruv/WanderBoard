@@ -133,7 +133,8 @@ export function AddToBucketModal({ isOpen, place, minDate, maxDate, onClose, onS
             <input
               type="time"
               value={time}
-              onChange={(event) => setTime(event.target.value)}
+              onChange={(event) => setTime(normalizeTimeInput(event.target.value))}
+              step={60}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
             />
           </Field>
@@ -204,6 +205,13 @@ function toIsoDateTime(date: string, time: string): string | undefined {
   const combined = new Date(`${date}T${time}`);
   if (Number.isNaN(combined.getTime())) return undefined;
   return combined.toISOString();
+}
+
+function normalizeTimeInput(value: string): string {
+  if (!value) return '';
+  const parts = value.split(':');
+  if (parts.length < 2) return value;
+  return `${parts[0]}:${parts[1]}`;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
