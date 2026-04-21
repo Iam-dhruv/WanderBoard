@@ -21,6 +21,7 @@ import {
 import {
   createTimelineEvent,
   updateTimelineEvent,
+  updateTimelineEvents,
   deleteTimelineEvent,
   pickEventColor,
 } from '../timelineService';
@@ -136,6 +137,41 @@ function buildDayTrees(events: TimelineEvent[]): Map<string, IntervalTree> {
   return map;
 }
 
+function toScheduledEvent(ev: TimelineEvent): ScheduledEvent {
+  const start = timeToMinutes(ev.startTime);
+  return {
+    id: ev.id,
+    start,
+    end: start + ev.durationMinutes,
+    durationMinutes: ev.durationMinutes,
+    tags: ev.tags ?? [],
+  };
+}
+
+function buildReflowUpdates(
+  baselineEvents: TimelineEvent[],
+  reflowedEvents: ScheduledEvent[],
+  excludeIds: Set<string> = new Set(),
+): Array<{ eventId: string; startTime: string }> {
+  const byId = new Map<string, TimelineEvent>(
+    baselineEvents.map((event) => [event.id, event]),
+  );
+
+  const updates: Array<{ eventId: string; startTime: string }> = [];
+  for (const event of reflowedEvents) {
+    if (excludeIds.has(event.id)) continue;
+    const baseline = byId.get(event.id);
+    if (!baseline) continue;
+
+    const nextStart = minutesToTime(event.start);
+    if (baseline.startTime !== nextStart) {
+      updates.push({ eventId: event.id, startTime: nextStart });
+    }
+  }
+
+  return updates;
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface TimelineGridProps {
@@ -228,15 +264,7 @@ export function TimelineGrid({
         const tree      = dayTrees.get(date) ?? new IntervalTree();
         const conflicts = tree.queryOverlap(startMin, endMin);
 
-        const existingOnDay = dayEvents.map(
-          (ev): ScheduledEvent => ({
-            id:              ev.id,
-            start:           timeToMinutes(ev.startTime),
-            end:             timeToMinutes(ev.startTime) + ev.durationMinutes,
-            durationMinutes: ev.durationMinutes,
-            tags:            ev.tags ?? [],
-          }),
-        );
+        const existingOnDay = dayEvents.map(toScheduledEvent);
 
         const newScheduled: ScheduledEvent = {
           id:              `pending-${Date.now()}`,
@@ -247,6 +275,7 @@ export function TimelineGrid({
         };
 
         let resolvedStartMin = startMin;
+        let reflowedEvents: ScheduledEvent[] | null = null;
 
         if (conflicts.length > 0) {
           const cspResult = scheduler.schedule(existingOnDay, newScheduled);
@@ -255,6 +284,7 @@ export function TimelineGrid({
             onDragEnd();
             return;
           }
+          reflowedEvents = cspResult.events;
           const placed = cspResult.events.find((ev) => ev.id === newScheduled.id);
           if (placed) resolvedStartMin = placed.start;
           if (cspResult.reason) onToast(`Scheduled with warning: ${cspResult.reason}`, 'warn');
@@ -289,7 +319,23 @@ export function TimelineGrid({
         });
 
         if (!result.ok) onToast(result.error, 'error');
-        else onToast(`"${bucketItemName}" added to timeline!`, 'success');
+        else {
+          if (reflowedEvents) {
+            const displacedUpdates = buildReflowUpdates(
+              dayEvents,
+              reflowedEvents,
+              new Set([newScheduled.id]),
+            );
+            const applyResult = await updateTimelineEvents(
+              trip.id,
+              displacedUpdates.map((u) => ({ eventId: u.eventId, startTime: u.startTime })),
+            );
+            if (!applyResult.ok) {
+              onToast(applyResult.error, 'error');
+            }
+          }
+          onToast(`"${bucketItemName}" added to timeline!`, 'success');
+        }
       }
 
       // ── B: Move existing event ──────────────────────────────────────────────
@@ -310,18 +356,13 @@ export function TimelineGrid({
         );
         const conflicts = tempTree.queryOverlap(startMin, endMin);
 
+        let resolvedStartMin = startMin;
+        let reflowedEvents: ScheduledEvent[] | null = null;
+
         if (conflicts.length > 0) {
           const existingOnDay = events
             .filter((ev) => ev.date === date && ev.id !== eventId)
-            .map(
-              (ev): ScheduledEvent => ({
-                id:              ev.id,
-                start:           timeToMinutes(ev.startTime),
-                end:             timeToMinutes(ev.startTime) + ev.durationMinutes,
-                durationMinutes: ev.durationMinutes,
-                tags:            ev.tags ?? [],
-              }),
-            );
+            .map(toScheduledEvent);
           const movedScheduled: ScheduledEvent = {
             id:              eventId,
             start:           startMin,
@@ -335,6 +376,11 @@ export function TimelineGrid({
             onDragEnd();
             return;
           }
+
+          reflowedEvents = cspResult.events;
+          const moved = cspResult.events.find((ev) => ev.id === eventId);
+          if (moved) resolvedStartMin = moved.start;
+          if (cspResult.reason) onToast(`Scheduled with warning: ${cspResult.reason}`, 'warn');
         }
 
         const op: OTOperation = {
@@ -342,19 +388,48 @@ export function TimelineGrid({
           eventId,
           timestamp: Date.now(),
           day:       date,
-          startTime: minutesToTime(startMin),
+          startTime: minutesToTime(resolvedStartMin),
         };
         const transformed = otEngine.current.apply(op, pendingOps.current);
         pendingOps.current.push(transformed);
 
-        const result = await updateTimelineEvent({
-          tripId:    trip.id,
-          eventId:   transformed.eventId,
-          date:      transformed.day ?? date,
-          startTime: transformed.startTime ?? minutesToTime(startMin),
-        });
+        const plannedUpdates = reflowedEvents
+          ? buildReflowUpdates(dayEvents, reflowedEvents)
+          : [];
 
-        if (!result.ok) onToast(result.error, 'error');
+        const movedStartTime = transformed.startTime ?? minutesToTime(resolvedStartMin);
+        const existingMovedIdx = plannedUpdates.findIndex((u) => u.eventId === transformed.eventId);
+        if (existingMovedIdx >= 0) {
+          plannedUpdates[existingMovedIdx] = {
+            eventId: transformed.eventId,
+            startTime: movedStartTime,
+          };
+        } else {
+          plannedUpdates.push({
+            eventId: transformed.eventId,
+            startTime: movedStartTime,
+          });
+        }
+
+        if (plannedUpdates.length === 1) {
+          const result = await updateTimelineEvent({
+            tripId: trip.id,
+            eventId: plannedUpdates[0].eventId,
+            date: transformed.day ?? date,
+            startTime: plannedUpdates[0].startTime,
+          });
+          if (!result.ok) onToast(result.error, 'error');
+        } else {
+          const result = await updateTimelineEvents(
+            trip.id,
+            plannedUpdates.map((u) => ({
+              eventId: u.eventId,
+              date: u.eventId === transformed.eventId ? (transformed.day ?? date) : date,
+              startTime: u.startTime,
+            })),
+          );
+          if (!result.ok) onToast(result.error, 'error');
+        }
       }
 
       onDragEnd();
@@ -386,10 +461,11 @@ export function TimelineGrid({
       const startMin = timeToMinutes(target.startTime);
       const endMin   = startMin + snapped;
 
-      const dayIntervals = eventsToIntervals(
-        events.filter((ev) => ev.date === target.date && ev.id !== eventId),
+      const tree = dayTrees.get(target.date) ?? new IntervalTree();
+      const tempTree = IntervalTree.fromArray(
+        tree.toArray().filter((interval) => interval.id !== eventId),
       );
-      const conflict = checkConflict(dayIntervals, startMin, endMin);
+      const conflict = tempTree.queryOverlap(startMin, endMin)[0] ?? null;
 
       if (conflict) {
         const conflictTitle = events.find((ev) => ev.id === conflict.id)?.title ?? 'another event';
@@ -403,7 +479,7 @@ export function TimelineGrid({
       const result = await updateTimelineEvent({ tripId: trip.id, eventId, durationMinutes: snapped });
       if (!result.ok) onToast(result.error, 'error');
     },
-    [events, trip.id, onToast],
+    [events, dayTrees, trip.id, onToast],
   );
 
   // ── Render ───────────────────────────────────────────────────────────────

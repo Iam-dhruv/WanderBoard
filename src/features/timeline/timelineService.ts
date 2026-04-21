@@ -8,6 +8,7 @@ import {
   doc,
   addDoc,
   updateDoc,
+  writeBatch,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
@@ -110,6 +111,17 @@ export interface UpdateEventInput {
   tags?: string[];
 }
 
+export interface BatchUpdateEventInput {
+  eventId: string;
+  date?: string;
+  startTime?: string;
+  durationMinutes?: number;
+  title?: string;
+  description?: string;
+  color?: string;
+  tags?: string[];
+}
+
 export async function updateTimelineEvent(
   input: UpdateEventInput,
 ): Promise<Result<void>> {
@@ -130,6 +142,39 @@ export async function updateTimelineEvent(
     return err(e?.code === 'permission-denied'
       ? 'Only the trip owner can move events.'
       : 'Failed to update event.');
+  }
+}
+
+export async function updateTimelineEvents(
+  tripId: string,
+  updates: BatchUpdateEventInput[],
+): Promise<Result<void>> {
+  if (updates.length === 0) return ok(undefined);
+
+  try {
+    const batch = writeBatch(db);
+
+    for (const input of updates) {
+      const patch: Record<string, unknown> = {};
+      if (input.date !== undefined)            patch.date            = input.date;
+      if (input.startTime !== undefined)       patch.startTime       = input.startTime;
+      if (input.durationMinutes !== undefined) patch.durationMinutes = input.durationMinutes;
+      if (input.title !== undefined)           patch.title           = input.title.trim();
+      if (input.description !== undefined)     patch.description     = input.description.trim();
+      if (input.color !== undefined)           patch.color           = input.color;
+      if (input.tags !== undefined)            patch.tags            = input.tags;
+
+      if (Object.keys(patch).length === 0) continue;
+      batch.update(timelineDoc(tripId, input.eventId), patch);
+    }
+
+    await batch.commit();
+    return ok(undefined);
+  } catch (e: any) {
+    console.error('[updateTimelineEvents]', e);
+    return err(e?.code === 'permission-denied'
+      ? 'Only the trip owner can move events.'
+      : 'Failed to update timeline events.');
   }
 }
 

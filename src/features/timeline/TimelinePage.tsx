@@ -499,6 +499,7 @@ export function TimelinePage() {
                 currentUserId={user?.uid ?? ''}
                 draggingBucketItem={draggingBucket}
                 draggingExistingEvent={draggingEvent}
+                onExistingEventDragStart={setDraggingEvent}
                 onDragEnd={() => { setDraggingBucket(null); setDraggingEvent(null); }}
                 onToast={addToast}
                 onOpenCreateModal={openCreateModal}

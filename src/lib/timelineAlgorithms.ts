@@ -51,32 +51,13 @@ export class IntervalTree {
     return node;
   }
 
-  // Remove an interval by id. O(log n) average.
+  // Remove an interval by id.
+  // Note: the tree is keyed by interval.start, not id, so removing by id via
+  // directional BST traversal is not reliable. Rebuild from filtered intervals
+  // to keep behavior correct and deterministic.
   remove(id: string): void {
-    this.root = this._remove(this.root, id);
-  }
-
-  private _remove(node: ITNode | null, id: string): ITNode | null {
-    if (!node) return null;
-    if (node.interval.id === id) {
-      if (!node.left) return node.right;
-      if (!node.right) return node.left;
-      // Replace with in-order successor
-      let successor = node.right;
-      while (successor.left) successor = successor.left;
-      node.interval = successor.interval;
-      node.right = this._remove(node.right, successor.interval.id);
-    } else if (id < node.interval.id) {
-      node.left = this._remove(node.left, id);
-    } else {
-      node.right = this._remove(node.right, id);
-    }
-    node.maxEnd = Math.max(
-      node.interval.end,
-      node.left?.maxEnd ?? 0,
-      node.right?.maxEnd ?? 0,
-    );
-    return node;
+    const next = this.toArray().filter((interval) => interval.id !== id);
+    this.root = IntervalTree.fromArray(next).root;
   }
 
   // Find all intervals overlapping [queryStart, queryEnd). O(log n + k) where k = results.
@@ -188,12 +169,21 @@ export interface CspResult {
 
 const DAY_END_MINUTE = 23 * 60 + 59; // 23:59
 const DEFAULT_BUFFER = 15;
+const SLOT_MINUTES = 15;
+const DEFAULT_MAX_BACKTRACKING_ATTEMPTS = 96;
+
+interface CspSchedulerOptions {
+  maxBacktrackingAttempts?: number;
+}
 
 export class CspScheduler {
   private constraints: Constraint[];
+  private maxBacktrackingAttempts: number;
 
-  constructor(constraints: Constraint[] = []) {
+  constructor(constraints: Constraint[] = [], options: CspSchedulerOptions = {}) {
     this.constraints = constraints;
+    this.maxBacktrackingAttempts =
+      options.maxBacktrackingAttempts ?? DEFAULT_MAX_BACKTRACKING_ATTEMPTS;
   }
 
   // Attempt to insert newEvent into existingEvents on the same day.
@@ -202,62 +192,144 @@ export class CspScheduler {
     existingEvents: ScheduledEvent[],
     newEvent: ScheduledEvent,
   ): CspResult {
-    // Validate hard constraints on the new event itself first
-    const hardViolation = this._checkHardConstraints(newEvent);
-    if (hardViolation) return { ok: false, events: [], reason: hardViolation };
+    const candidateStarts = this._generateCandidateStarts(
+      newEvent.start,
+      newEvent.durationMinutes,
+    );
+    const maxAttempts = Math.min(
+      this.maxBacktrackingAttempts,
+      candidateStarts.length,
+    );
 
-    // Working copy sorted by start time
-    const working: ScheduledEvent[] = [
-      ...existingEvents.map((e) => ({ ...e })),
-      { ...newEvent },
-    ].sort((a, b) => a.start - b.start);
+    let lastFailureReason =
+      `No valid placement found within ${maxAttempts} backtracking attempts.`;
 
-    // Forward pass: shift events forward to resolve overlaps
-    const buffer = this._bufferMinutes();
-    for (let i = 1; i < working.length; i++) {
-      const prev = working[i - 1];
-      const curr = working[i];
-      const requiredStart = prev.end + buffer;
-      if (curr.start < requiredStart) {
-        const shift = requiredStart - curr.start;
-        curr.start += shift;
-        curr.end += shift;
+    for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
+      const candidateStart = candidateStarts[attemptIndex];
+      const attempt = this._propagateWithQueue(
+        existingEvents,
+        newEvent,
+        candidateStart,
+      );
+
+      if (!attempt.ok) {
+        lastFailureReason = attempt.reason ?? lastFailureReason;
+        continue;
       }
-    }
 
-    // Check if any event got pushed past day boundary
-    const overflow = working.find((e) => e.end > DAY_END_MINUTE);
-    if (overflow) {
-      // Backtrack: try inserting new event at a later slot instead
-      const lastExisting = existingEvents
-        .map((e) => e.end)
-        .reduce((max, end) => Math.max(max, end), 0);
-      const reflowedStart = lastExisting + buffer;
-      const reflowedEnd = reflowedStart + newEvent.durationMinutes;
-      if (reflowedEnd > DAY_END_MINUTE) {
-        return {
-          ok: false,
-          events: [],
-          reason: `No room on this day — all slots after ${this._fmt(reflowedStart)} are taken.`,
-        };
+      const hardViolation = this._checkScheduleHardConstraints(attempt.events);
+      if (hardViolation) {
+        lastFailureReason = hardViolation;
+        continue;
       }
-      const reflowed = { ...newEvent, start: reflowedStart, end: reflowedEnd };
+
+      const warnings = attempt.events
+        .map((event) => this._checkSoftConstraints(event))
+        .filter(Boolean) as string[];
+
+      const reasons: string[] = [];
+      if (attemptIndex > 0) {
+        reasons.push(`Reflowed after ${attemptIndex + 1} attempts`);
+      }
+      if (warnings.length > 0) {
+        reasons.push(warnings.join('; '));
+      }
+
       return {
         ok: true,
-        events: [...existingEvents, reflowed].sort((a, b) => a.start - b.start),
+        events: attempt.events,
+        reason: reasons.length > 0 ? reasons.join('; ') : undefined,
       };
     }
 
-    // Check soft constraints (warn but still succeed)
-    const warnings = working
-      .map((e) => this._checkSoftConstraints(e))
-      .filter(Boolean);
-
     return {
-      ok: true,
-      events: working,
-      reason: warnings.length ? warnings.join('; ') : undefined,
+      ok: false,
+      events: [],
+      reason: lastFailureReason,
     };
+  }
+
+  private _generateCandidateStarts(
+    initialStart: number,
+    durationMinutes: number,
+  ): number[] {
+    const first = this._snapToGrid(Math.max(0, initialStart));
+    const latest = DAY_END_MINUTE - durationMinutes;
+    if (latest < first) return [];
+
+    const starts: number[] = [];
+    for (let minute = first; minute <= latest; minute += SLOT_MINUTES) {
+      starts.push(minute);
+    }
+    return starts;
+  }
+
+  private _propagateWithQueue(
+    existingEvents: ScheduledEvent[],
+    newEvent: ScheduledEvent,
+    startMinute: number,
+  ): { ok: true; events: ScheduledEvent[] } | { ok: false; reason: string } {
+    const inserted: ScheduledEvent = {
+      ...newEvent,
+      start: startMinute,
+      end: startMinute + newEvent.durationMinutes,
+    };
+
+    const working: ScheduledEvent[] = [
+      ...existingEvents.map((event) => ({ ...event })),
+      inserted,
+    ].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+
+    const queue: number[] = [];
+    for (let i = 0; i < working.length - 1; i++) {
+      queue.push(i);
+    }
+
+    const buffer = this._bufferMinutes();
+    const maxPropagationSteps = Math.max(32, working.length * working.length * 4);
+    let propagationSteps = 0;
+
+    while (queue.length > 0) {
+      const edgeIndex = queue.shift()!;
+      if (edgeIndex < 0 || edgeIndex >= working.length - 1) {
+        continue;
+      }
+
+      const left = working[edgeIndex];
+      const right = working[edgeIndex + 1];
+      const requiredStart = left.end + buffer;
+
+      if (right.start < requiredStart) {
+        const shift = requiredStart - right.start;
+        right.start += shift;
+        right.end += shift;
+
+        if (right.end > DAY_END_MINUTE) {
+          return {
+            ok: false,
+            reason: `No room on this day after ${this._fmt(startMinute)} — events overflow past ${this._fmt(DAY_END_MINUTE)}.`,
+          };
+        }
+
+        if (edgeIndex + 1 < working.length - 1) {
+          queue.push(edgeIndex + 1);
+        }
+      }
+
+      propagationSteps += 1;
+      if (propagationSteps > maxPropagationSteps) {
+        return {
+          ok: false,
+          reason: 'Constraint propagation did not converge within the bounded step limit.',
+        };
+      }
+    }
+
+    return { ok: true, events: working };
+  }
+
+  private _snapToGrid(minutes: number): number {
+    return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
   }
 
   private _bufferMinutes(): number {
@@ -267,7 +339,33 @@ export class CspScheduler {
     return bufferConstraint?.bufferMinutes ?? DEFAULT_BUFFER;
   }
 
-  private _checkHardConstraints(event: ScheduledEvent): string | null {
+  private _checkScheduleHardConstraints(events: ScheduledEvent[]): string | null {
+    const sorted = [...events].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    const buffer = this._bufferMinutes();
+
+    for (let i = 0; i < sorted.length; i++) {
+      const event = sorted[i];
+      if (event.start < 0) {
+        return `Event "${event.id}" starts before 00:00.`;
+      }
+      if (event.end > DAY_END_MINUTE) {
+        return `Event "${event.id}" ends after ${this._fmt(DAY_END_MINUTE)}.`;
+      }
+
+      const eventViolation = this._checkEventHardConstraints(event);
+      if (eventViolation) return eventViolation;
+
+      if (i === 0) continue;
+      const prev = sorted[i - 1];
+      if (event.start < prev.end + buffer) {
+        return `Events "${prev.id}" and "${event.id}" violate the ${buffer}min minimum gap.`;
+      }
+    }
+
+    return null;
+  }
+
+  private _checkEventHardConstraints(event: ScheduledEvent): string | null {
     for (const c of this.constraints) {
       if (c.type === 'golden-hour' && event.tags.includes('photography')) {
         const win = c.windowMinutes ?? 30;
@@ -279,6 +377,14 @@ export class CspScheduler {
           Math.abs(event.start - c.sunsetMinute) <= win;
         if (!nearSunrise && !nearSunset) {
           return `Photography events must start within ${win}min of golden hour (sunrise ${this._fmt(c.sunriseMinute ?? 0)} / sunset ${this._fmt(c.sunsetMinute ?? 0)}).`;
+        }
+      }
+
+      if (c.type === 'business-hours') {
+        const open = c.openTime ?? 0;
+        const close = c.closeTime ?? DAY_END_MINUTE;
+        if (event.start < open || event.end > close) {
+          return `Event "${event.id}" must be scheduled within business hours ${this._fmt(open)}-${this._fmt(close)}.`;
         }
       }
     }

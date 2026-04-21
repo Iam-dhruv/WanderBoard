@@ -12,13 +12,27 @@ interface EventCardProps {
   isOwner: boolean;
   onDelete?: (eventId: string) => void;
   onDragStart?: (event: TimelineEvent) => void;
+  onDragEnd?: () => void;
   onResizeEnd?: (eventId: string, newDurationMinutes: number) => void;
+  onResizePreviewStart?: (eventId: string, newDurationMinutes: number) => void;
+  onResizePreviewChange?: (eventId: string, newDurationMinutes: number) => void;
+  onResizePreviewEnd?: (eventId: string) => void;
 }
 
 const PX_PER_MINUTE = 1.2; // must match TimelineGrid
 const SNAP_MINUTES  = 15;
 
-export function EventCard({ event, isOwner, onDelete, onDragStart, onResizeEnd }: EventCardProps) {
+export function EventCard({
+  event,
+  isOwner,
+  onDelete,
+  onDragStart,
+  onDragEnd,
+  onResizeEnd,
+  onResizePreviewStart,
+  onResizePreviewChange,
+  onResizePreviewEnd,
+}: EventCardProps) {
   const [hovered, setHovered] = useState(false);
   const [resizingDuration, setResizingDuration] = useState<number | null>(null);
 
@@ -42,11 +56,14 @@ export function EventCard({ event, isOwner, onDelete, onDragStart, onResizeEnd }
     const startY = e.clientY;
     const startDuration = event.durationMinutes;
     setResizingDuration(startDuration);
+    onResizePreviewStart?.(event.id, startDuration);
 
     const onMouseMove = (ev: MouseEvent) => {
       const deltaY = ev.clientY - startY;
       const deltaDuration = Math.round(deltaY / PX_PER_MINUTE / SNAP_MINUTES) * SNAP_MINUTES;
-      setResizingDuration(Math.max(SNAP_MINUTES, startDuration + deltaDuration));
+      const nextDuration = Math.max(SNAP_MINUTES, startDuration + deltaDuration);
+      setResizingDuration(nextDuration);
+      onResizePreviewChange?.(event.id, nextDuration);
     };
 
     const onMouseUp = (ev: MouseEvent) => {
@@ -56,6 +73,7 @@ export function EventCard({ event, isOwner, onDelete, onDragStart, onResizeEnd }
       const deltaDuration = Math.round(deltaY / PX_PER_MINUTE / SNAP_MINUTES) * SNAP_MINUTES;
       const finalDuration = Math.max(SNAP_MINUTES, startDuration + deltaDuration);
       setResizingDuration(null);
+      onResizePreviewEnd?.(event.id);
       onResizeEnd?.(event.id, finalDuration);
     };
 
@@ -78,6 +96,7 @@ export function EventCard({ event, isOwner, onDelete, onDragStart, onResizeEnd }
               }
             : undefined
         }
+        onDragEnd={isOwner ? onDragEnd : undefined}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
